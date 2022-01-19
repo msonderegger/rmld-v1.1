@@ -1,0 +1,383 @@
+condition,item,text,participant,conditionLabel,npType,voice,order,acoustics,stressshift
+1,1,"John hit Mary, and then John was hit by Mary.",540,Williams,full,passive,2,-0.83370665,noshift
+1,1,"John hit Mary, and then John was hit by Mary.",544,Williams,full,passive,3,0.30167734,shift
+1,1,"John hit Mary, and then John was hit by Mary.",549,Williams,full,passive,4,-1.01643228,noshift
+1,1,"John hit Mary, and then John was hit by Mary.",554,Williams,full,passive,2,-0.64810763,noshift
+1,1,"John hit Mary, and then John was hit by Mary.",558,Williams,full,passive,1,-0.24895437,noshift
+1,1,"John hit Mary, and then John was hit by Mary.",561,Williams,full,passive,2,-0.33020859,shift
+1,10,"Lucy was counselled by Linus, and that's why Lucy decided to counsel Linus.",530,Williams,full,active,11,-1.61041512,noshift
+1,10,"Lucy was counselled by Linus, and that's why Lucy decided to counsel Linus.",548,Williams,full,active,10,-0.59759787,noshift
+1,10,"Lucy was counselled by Linus, and that's why Lucy decided to counsel Linus.",553,Williams,full,active,12,-0.45876506,noshift
+1,10,"Lucy was counselled by Linus, and that's why Lucy decided to counsel Linus.",557,Williams,full,active,10,-2.10342078,noshift
+1,10,"Lucy was counselled by Linus, and that's why Lucy decided to counsel Linus.",560,Williams,full,active,12,-0.54041662,shift
+1,10,"Lucy was counselled by Linus, and that's why Lucy decided to counsel Linus.",564,Williams,full,active,12,-0.75285851,noshift
+1,11,"Andrea mocked a classmate, and later on Andrea was mocked by a classmate.",297,Williams,full,passive,10,-0.00614565,shift
+1,11,"Andrea mocked a classmate, and later on Andrea was mocked by a classmate.",542,Williams,full,passive,10,-0.95485368,noshift
+1,11,"Andrea mocked a classmate, and later on Andrea was mocked by a classmate.",552,Williams,full,passive,10,-1.75407296,noshift
+1,11,"Andrea mocked a classmate, and later on Andrea was mocked by a classmate.",559,Williams,full,passive,10,-2.2631848,shift
+1,12,"Henry was accused by the committee, and afterwards Henry accused the committee.",24,Williams,full,active,10,-0.71155077,shift
+1,12,"Henry was accused by the committee, and afterwards Henry accused the committee.",524,Williams,full,active,12,-1.20137278,shift
+1,12,"Henry was accused by the committee, and afterwards Henry accused the committee.",541,Williams,full,active,10,-0.32186301,shift
+1,12,"Henry was accused by the committee, and afterwards Henry accused the committee.",547,Williams,full,active,10,-1.21871623,noshift
+1,12,"Henry was accused by the committee, and afterwards Henry accused the committee.",550,Williams,full,active,11,-0.6460454,shift
+1,12,"Henry was accused by the committee, and afterwards Henry accused the committee.",555,Williams,full,active,12,-0.83898773,shift
+1,12,"Henry was accused by the committee, and afterwards Henry accused the committee.",562,Williams,full,active,10,-0.21732063,shift
+1,13,"Ron was promoted by a colleague, and then the following week Ron promoted a colleague.",540,Williams,full,active,15,-1.24171743,shift
+1,13,"Ron was promoted by a colleague, and then the following week Ron promoted a colleague.",544,Williams,full,active,15,-1.95360709,shift
+1,13,"Ron was promoted by a colleague, and then the following week Ron promoted a colleague.",549,Williams,full,active,13,-1.405214,shift
+1,13,"Ron was promoted by a colleague, and then the following week Ron promoted a colleague.",554,Williams,full,active,13,-2.8757844,noshift
+1,13,"Ron was promoted by a colleague, and then the following week Ron promoted a colleague.",561,Williams,full,active,16,-0.34326628,shift
+1,14,"Nina kicked Roger, then Nina was kicked by Roger.",432,Williams,full,passive,13,-1.68023923,shift
+1,14,"Nina kicked Roger, then Nina was kicked by Roger.",530,Williams,full,passive,13,-2.45894777,shift
+1,14,"Nina kicked Roger, then Nina was kicked by Roger.",548,Williams,full,passive,13,-0.4498787,shift
+1,14,"Nina kicked Roger, then Nina was kicked by Roger.",553,Williams,full,passive,14,-1.32369938,noshift
+1,14,"Nina kicked Roger, then Nina was kicked by Roger.",557,Williams,full,passive,16,-0.5849373,shift
+1,15,"Daniel followed Betsy, then Daniel was followed by Betsy.",297,Williams,full,passive,15,-1.56406545,shift
+1,15,"Daniel followed Betsy, then Daniel was followed by Betsy.",529,Williams,full,passive,15,-1.69634972,shift
+1,15,"Daniel followed Betsy, then Daniel was followed by Betsy.",542,Williams,full,passive,13,-0.88746832,shift
+1,15,"Daniel followed Betsy, then Daniel was followed by Betsy.",552,Williams,full,passive,14,-0.65753841,shift
+1,15,"Daniel followed Betsy, then Daniel was followed by Betsy.",556,Williams,full,passive,13,-1.7456282,shift
+1,15,"Daniel followed Betsy, then Daniel was followed by Betsy.",559,Williams,full,passive,14,-1.80659769,noshift
+1,15,"Daniel followed Betsy, then Daniel was followed by Betsy.",563,Williams,full,passive,15,-1.4862087,shift
+1,16,"Samuel was charmed by the audience, and then Samuel charmed the audience.",24,Williams,full,active,15,-1.0682552,noshift
+1,16,"Samuel was charmed by the audience, and then Samuel charmed the audience.",547,Williams,full,active,15,-1.62431063,shift
+1,16,"Samuel was charmed by the audience, and then Samuel charmed the audience.",550,Williams,full,active,16,-1.75618853,noshift
+1,16,"Samuel was charmed by the audience, and then Samuel charmed the audience.",555,Williams,full,active,14,-1.40517634,noshift
+1,16,"Samuel was charmed by the audience, and then Samuel charmed the audience.",562,Williams,full,active,13,-1.85030194,noshift
+1,2,"Clara loves the public, and Clara is loved by the public.",432,Williams,full,passive,3,-0.10219274,shift
+1,2,"Clara loves the public, and Clara is loved by the public.",548,Williams,full,passive,1,-0.47935634,shift
+1,2,"Clara loves the public, and Clara is loved by the public.",553,Williams,full,passive,4,-0.31363079,shift
+1,2,"Clara loves the public, and Clara is loved by the public.",557,Williams,full,passive,2,0.79504333,shift
+1,2,"Clara loves the public, and Clara is loved by the public.",560,Williams,full,passive,4,0.62187694,shift
+1,3,"Ana was provoked by Derek, and  that's when Ana provoked Derek.",297,Williams,full,active,1,0.127375,noshift
+1,3,"Ana was provoked by Derek, and  that's when Ana provoked Derek.",529,Williams,full,active,4,-1.40455878,shift
+1,3,"Ana was provoked by Derek, and  that's when Ana provoked Derek.",542,Williams,full,active,2,-0.76957342,noshift
+1,3,"Ana was provoked by Derek, and  that's when Ana provoked Derek.",552,Williams,full,active,1,-0.95427907,noshift
+1,3,"Ana was provoked by Derek, and  that's when Ana provoked Derek.",556,Williams,full,active,2,-1.62578308,noshift
+1,3,"Ana was provoked by Derek, and  that's when Ana provoked Derek.",563,Williams,full,active,4,-1.54427977,noshift
+1,4,"Darin kissed Sue, and later Darin was kissed by Sue.",24,Williams,full,passive,1,-1.88175606,shift
+1,4,"Darin kissed Sue, and later Darin was kissed by Sue.",524,Williams,full,passive,1,-0.73926245,shift
+1,4,"Darin kissed Sue, and later Darin was kissed by Sue.",541,Williams,full,passive,3,-1.35089334,noshift
+1,4,"Darin kissed Sue, and later Darin was kissed by Sue.",547,Williams,full,passive,3,-1.65977967,noshift
+1,4,"Darin kissed Sue, and later Darin was kissed by Sue.",550,Williams,full,passive,2,-1.9320478,shift
+1,4,"Darin kissed Sue, and later Darin was kissed by Sue.",555,Williams,full,passive,4,-0.97097992,noshift
+1,4,"Darin kissed Sue, and later Darin was kissed by Sue.",562,Williams,full,passive,1,-1.09820684,shift
+1,5,"Keren was embraced by a fan, and then Keren embraced a fan.",540,Williams,full,active,6,-1.16037739,noshift
+1,5,"Keren was embraced by a fan, and then Keren embraced a fan.",544,Williams,full,active,5,-0.04832218,shift
+1,5,"Keren was embraced by a fan, and then Keren embraced a fan.",549,Williams,full,active,5,-0.57967969,shift
+1,5,"Keren was embraced by a fan, and then Keren embraced a fan.",554,Williams,full,active,7,0.26684158,shift
+1,5,"Keren was embraced by a fan, and then Keren embraced a fan.",558,Williams,full,active,6,-1.50044975,noshift
+1,6,"Tom was greeted by Anthony, then Tom greeted Anthony.",432,Williams,full,active,7,-2.00056041,noshift
+1,6,"Tom was greeted by Anthony, then Tom greeted Anthony.",530,Williams,full,active,6,-1.30443817,noshift
+1,6,"Tom was greeted by Anthony, then Tom greeted Anthony.",548,Williams,full,active,6,-0.32632278,shift
+1,6,"Tom was greeted by Anthony, then Tom greeted Anthony.",553,Williams,full,active,7,-0.45565389,noshift
+1,6,"Tom was greeted by Anthony, then Tom greeted Anthony.",557,Williams,full,active,7,-1.12861123,noshift
+1,6,"Tom was greeted by Anthony, then Tom greeted Anthony.",560,Williams,full,active,6,-0.95342576,noshift
+1,6,"Tom was greeted by Anthony, then Tom greeted Anthony.",564,Williams,full,active,7,-1.07052182,noshift
+1,7,"George invited a cousin, and then George was invited by a cousin.",297,Williams,full,passive,5,-1.02798625,shift
+1,7,"George invited a cousin, and then George was invited by a cousin.",529,Williams,full,passive,7,-1.8098459,noshift
+1,7,"George invited a cousin, and then George was invited by a cousin.",542,Williams,full,passive,6,-1.50365485,shift
+1,7,"George invited a cousin, and then George was invited by a cousin.",556,Williams,full,passive,5,-0.62852716,shift
+1,7,"George invited a cousin, and then George was invited by a cousin.",559,Williams,full,passive,6,-1.15436864,noshift
+1,8,"Laura was envied by Todd, and Laura envied Todd.",24,Williams,full,active,7,-0.37046713,shift
+1,8,"Laura was envied by Todd, and Laura envied Todd.",541,Williams,full,active,5,-0.92433691,noshift
+1,8,"Laura was envied by Todd, and Laura envied Todd.",547,Williams,full,active,7,-0.67265568,shift
+1,8,"Laura was envied by Todd, and Laura envied Todd.",562,Williams,full,active,7,-1.27528998,noshift
+1,9,"Helen praised a student, and then Helen was praised by a student.",544,Williams,full,passive,11,-0.07501081,shift
+1,9,"Helen praised a student, and then Helen was praised by a student.",549,Williams,full,passive,11,-1.75185091,shift
+1,9,"Helen praised a student, and then Helen was praised by a student.",554,Williams,full,passive,9,-1.86117383,shift
+1,9,"Helen praised a student, and then Helen was praised by a student.",558,Williams,full,passive,11,-1.25651665,shift
+1,9,"Helen praised a student, and then Helen was praised by a student.",561,Williams,full,passive,10,-0.95499338,shift
+2,1,"Mary was hit by John, and then John was hit by Mary.",24,Contrast,full,passive,3,-0.38439605,shift
+2,1,"Mary was hit by John, and then John was hit by Mary.",524,Contrast,full,passive,3,-0.73319619,noshift
+2,1,"Mary was hit by John, and then John was hit by Mary.",541,Contrast,full,passive,1,0.12849895,noshift
+2,1,"Mary was hit by John, and then John was hit by Mary.",547,Contrast,full,passive,2,-1.75979412,noshift
+2,1,"Mary was hit by John, and then John was hit by Mary.",550,Contrast,full,passive,1,-0.76898734,noshift
+2,1,"Mary was hit by John, and then John was hit by Mary.",555,Contrast,full,passive,2,-0.8141531,noshift
+2,1,"Mary was hit by John, and then John was hit by Mary.",562,Contrast,full,passive,4,-1.03698997,noshift
+2,10,"Linus counselled Lucy, and that's why Lucy decided to counsel Linus.",540,Contrast,full,active,9,-0.69611904,noshift
+2,10,"Linus counselled Lucy, and that's why Lucy decided to counsel Linus.",544,Contrast,full,active,9,-1.78354611,noshift
+2,10,"Linus counselled Lucy, and that's why Lucy decided to counsel Linus.",549,Contrast,full,active,10,-2.1769998,noshift
+2,10,"Linus counselled Lucy, and that's why Lucy decided to counsel Linus.",554,Contrast,full,active,10,-1.49608057,noshift
+2,10,"Linus counselled Lucy, and that's why Lucy decided to counsel Linus.",558,Contrast,full,active,12,-2.68280289,noshift
+2,10,"Linus counselled Lucy, and that's why Lucy decided to counsel Linus.",561,Contrast,full,active,9,-0.44909467,noshift
+2,11,"A classmate was mocked by Andrea, and later on Andrea was mocked by a classmate.",432,Contrast,full,passive,12,-2.12437516,noshift
+2,11,"A classmate was mocked by Andrea, and later on Andrea was mocked by a classmate.",530,Contrast,full,passive,10,-1.63137412,shift
+2,11,"A classmate was mocked by Andrea, and later on Andrea was mocked by a classmate.",548,Contrast,full,passive,11,-0.57719383,noshift
+2,11,"A classmate was mocked by Andrea, and later on Andrea was mocked by a classmate.",553,Contrast,full,passive,10,-0.87378648,noshift
+2,11,"A classmate was mocked by Andrea, and later on Andrea was mocked by a classmate.",557,Contrast,full,passive,11,-1.24379508,noshift
+2,11,"A classmate was mocked by Andrea, and later on Andrea was mocked by a classmate.",564,Contrast,full,passive,9,-1.93082011,noshift
+2,12,"The committee accused Henry, and afterwards Henry accused the committee.",297,Contrast,full,active,9,-1.26917101,noshift
+2,12,"The committee accused Henry, and afterwards Henry accused the committee.",542,Contrast,full,active,9,-0.92645187,noshift
+2,12,"The committee accused Henry, and afterwards Henry accused the committee.",552,Contrast,full,active,12,-1.40764124,noshift
+2,12,"The committee accused Henry, and afterwards Henry accused the committee.",556,Contrast,full,active,12,-1.58959148,noshift
+2,12,"The committee accused Henry, and afterwards Henry accused the committee.",563,Contrast,full,active,12,-1.37316299,noshift
+2,13,"A colleague promoted Ron, and then the following week Ron promoted a colleague.",24,Contrast,full,active,14,-1.07182641,noshift
+2,13,"A colleague promoted Ron, and then the following week Ron promoted a colleague.",524,Contrast,full,active,13,-1.87275327,noshift
+2,13,"A colleague promoted Ron, and then the following week Ron promoted a colleague.",541,Contrast,full,active,15,-1.28181415,noshift
+2,13,"A colleague promoted Ron, and then the following week Ron promoted a colleague.",547,Contrast,full,active,13,-1.60280191,noshift
+2,13,"A colleague promoted Ron, and then the following week Ron promoted a colleague.",550,Contrast,full,active,13,-1.82214435,noshift
+2,13,"A colleague promoted Ron, and then the following week Ron promoted a colleague.",555,Contrast,full,active,16,-1.61375983,noshift
+2,13,"A colleague promoted Ron, and then the following week Ron promoted a colleague.",562,Contrast,full,active,15,-2.25809645,noshift
+2,14,"Roger was kicked by Nina, and then Nina was kicked by Roger.",540,Contrast,full,passive,14,-0.35600569,noshift
+2,14,"Roger was kicked by Nina, and then Nina was kicked by Roger.",544,Contrast,full,passive,16,-2.09842483,noshift
+2,14,"Roger was kicked by Nina, and then Nina was kicked by Roger.",549,Contrast,full,passive,15,-2.61558902,noshift
+2,14,"Roger was kicked by Nina, and then Nina was kicked by Roger.",554,Contrast,full,passive,14,-1.53020875,noshift
+2,14,"Roger was kicked by Nina, and then Nina was kicked by Roger.",558,Contrast,full,passive,14,-0.99559575,noshift
+2,14,"Roger was kicked by Nina, and then Nina was kicked by Roger.",561,Contrast,full,passive,15,-0.16156702,noshift
+2,15,"Betsy was followed by Daniel, then Daniel was followed by Betsy.",432,Contrast,full,passive,14,-3.04740983,noshift
+2,15,"Betsy was followed by Daniel, then Daniel was followed by Betsy.",530,Contrast,full,passive,15,-0.88154441,shift
+2,15,"Betsy was followed by Daniel, then Daniel was followed by Betsy.",548,Contrast,full,passive,16,-1.12234137,noshift
+2,15,"Betsy was followed by Daniel, then Daniel was followed by Betsy.",553,Contrast,full,passive,15,-0.81864611,noshift
+2,15,"Betsy was followed by Daniel, then Daniel was followed by Betsy.",557,Contrast,full,passive,15,-0.60307252,noshift
+2,15,"Betsy was followed by Daniel, then Daniel was followed by Betsy.",560,Contrast,full,passive,15,-0.17962791,noshift
+2,15,"Betsy was followed by Daniel, then Daniel was followed by Betsy.",564,Contrast,full,passive,14,0.53738546,noshift
+2,16,"The audience charmed Samuel, and then Samuel charmed the audience.",529,Contrast,full,active,16,-1.80027788,noshift
+2,16,"The audience charmed Samuel, and then Samuel charmed the audience.",542,Contrast,full,active,14,-1.66981028,noshift
+2,16,"The audience charmed Samuel, and then Samuel charmed the audience.",556,Contrast,full,active,14,-2.03957751,noshift
+2,16,"The audience charmed Samuel, and then Samuel charmed the audience.",559,Contrast,full,active,13,-1.37988758,noshift
+2,16,"The audience charmed Samuel, and then Samuel charmed the audience.",563,Contrast,full,active,14,-1.16164923,shift
+2,2,"The public is loved by Clara, and Clara is loved by the public.",540,Contrast,full,passive,4,-0.84174321,noshift
+2,2,"The public is loved by Clara, and Clara is loved by the public.",549,Contrast,full,passive,3,-0.64417072,noshift
+2,2,"The public is loved by Clara, and Clara is loved by the public.",558,Contrast,full,passive,2,-0.74572327,noshift
+2,2,"The public is loved by Clara, and Clara is loved by the public.",561,Contrast,full,passive,3,0.98028463,noshift
+2,3,"Derek provoked Ana, and that's when Ana provoked Derek.",432,Contrast,full,active,4,0.09632964,shift
+2,3,"Derek provoked Ana, and that's when Ana provoked Derek.",530,Contrast,full,active,4,-0.50176327,noshift
+2,3,"Derek provoked Ana, and that's when Ana provoked Derek.",548,Contrast,full,active,3,0.11860131,shift
+2,3,"Derek provoked Ana, and that's when Ana provoked Derek.",553,Contrast,full,active,2,-0.93081448,noshift
+2,3,"Derek provoked Ana, and that's when Ana provoked Derek.",557,Contrast,full,active,4,-0.44293394,noshift
+2,3,"Derek provoked Ana, and that's when Ana provoked Derek.",560,Contrast,full,active,3,-0.80457905,noshift
+2,3,"Derek provoked Ana, and that's when Ana provoked Derek.",564,Contrast,full,active,4,-0.9937624,noshift
+2,4,"Sue was kissed by Darin, and later Darin was kissed by Sue.",297,Contrast,full,passive,2,-0.90607808,noshift
+2,4,"Sue was kissed by Darin, and later Darin was kissed by Sue.",529,Contrast,full,passive,2,-2.26858038,noshift
+2,4,"Sue was kissed by Darin, and later Darin was kissed by Sue.",542,Contrast,full,passive,4,-1.88472621,noshift
+2,4,"Sue was kissed by Darin, and later Darin was kissed by Sue.",556,Contrast,full,passive,1,-1.27371671,noshift
+2,4,"Sue was kissed by Darin, and later Darin was kissed by Sue.",559,Contrast,full,passive,2,-2.37622633,noshift
+2,4,"Sue was kissed by Darin, and later Darin was kissed by Sue.",563,Contrast,full,passive,2,-1.37620945,noshift
+2,5,"A fan embraced Keren, and then Keren embraced a fan.",24,Contrast,full,active,6,-1.43095176,noshift
+2,5,"A fan embraced Keren, and then Keren embraced a fan.",524,Contrast,full,active,7,-0.85780309,noshift
+2,5,"A fan embraced Keren, and then Keren embraced a fan.",541,Contrast,full,active,8,-0.20061923,noshift
+2,5,"A fan embraced Keren, and then Keren embraced a fan.",547,Contrast,full,active,6,-0.53805482,noshift
+2,5,"A fan embraced Keren, and then Keren embraced a fan.",550,Contrast,full,active,7,-0.81116487,noshift
+2,5,"A fan embraced Keren, and then Keren embraced a fan.",555,Contrast,full,active,6,-2.12623873,noshift
+2,5,"A fan embraced Keren, and then Keren embraced a fan.",562,Contrast,full,active,6,-1.3778648,noshift
+2,6,"Anthony greeted Tom, then Tom greeted Anthony.",540,Contrast,full,active,7,-1.09948608,noshift
+2,6,"Anthony greeted Tom, then Tom greeted Anthony.",544,Contrast,full,active,8,-1.09753979,noshift
+2,6,"Anthony greeted Tom, then Tom greeted Anthony.",549,Contrast,full,active,6,-0.37953149,noshift
+2,6,"Anthony greeted Tom, then Tom greeted Anthony.",554,Contrast,full,active,5,-1.47515941,noshift
+2,6,"Anthony greeted Tom, then Tom greeted Anthony.",558,Contrast,full,active,5,-2.28297764,noshift
+2,6,"Anthony greeted Tom, then Tom greeted Anthony.",561,Contrast,full,active,7,-0.95550978,noshift
+2,7,"A cousin was invited by George, and then George was invited by a cousin.",432,Contrast,full,passive,5,-2.14676728,noshift
+2,7,"A cousin was invited by George, and then George was invited by a cousin.",530,Contrast,full,passive,7,-1.319598,shift
+2,7,"A cousin was invited by George, and then George was invited by a cousin.",548,Contrast,full,passive,8,-0.20285012,noshift
+2,7,"A cousin was invited by George, and then George was invited by a cousin.",553,Contrast,full,passive,8,-0.80503763,noshift
+2,7,"A cousin was invited by George, and then George was invited by a cousin.",557,Contrast,full,passive,6,-0.81636918,noshift
+2,7,"A cousin was invited by George, and then George was invited by a cousin.",560,Contrast,full,passive,5,-0.48332249,noshift
+2,7,"A cousin was invited by George, and then George was invited by a cousin.",564,Contrast,full,passive,8,-0.85284507,noshift
+2,8,"Todd envied Laura, and Laura envied Todd.",297,Contrast,full,active,8,-0.76108587,noshift
+2,8,"Todd envied Laura, and Laura envied Todd.",529,Contrast,full,active,5,-1.80118046,noshift
+2,8,"Todd envied Laura, and Laura envied Todd.",542,Contrast,full,active,5,-0.81000962,noshift
+2,8,"Todd envied Laura, and Laura envied Todd.",552,Contrast,full,active,7,-1.4787624,noshift
+2,8,"Todd envied Laura, and Laura envied Todd.",556,Contrast,full,active,7,-0.95975654,noshift
+2,8,"Todd envied Laura, and Laura envied Todd.",559,Contrast,full,active,7,-1.10675572,noshift
+2,8,"Todd envied Laura, and Laura envied Todd.",563,Contrast,full,active,5,-0.76249015,noshift
+2,9,"A student was praised by Helen, and then Helen was praised by a student.",24,Contrast,full,passive,11,-2.09719722,noshift
+2,9,"A student was praised by Helen, and then Helen was praised by a student.",524,Contrast,full,passive,9,-0.51341117,noshift
+2,9,"A student was praised by Helen, and then Helen was praised by a student.",541,Contrast,full,passive,11,-0.96020852,noshift
+2,9,"A student was praised by Helen, and then Helen was praised by a student.",550,Contrast,full,passive,10,-2.54042865,noshift
+2,9,"A student was praised by Helen, and then Helen was praised by a student.",555,Contrast,full,passive,11,-1.70598445,noshift
+2,9,"A student was praised by Helen, and then Helen was praised by a student.",562,Contrast,full,passive,9,-2.0784588,noshift
+3,1,"John hit her, and then John was hit by her.",297,Williams,pronoun,passive,4,0.1509817,shift
+3,1,"John hit her, and then John was hit by her.",529,Williams,pronoun,passive,1,-1.21133919,shift
+3,1,"John hit her, and then John was hit by her.",542,Williams,pronoun,passive,1,-0.5657448,shift
+3,1,"John hit her, and then John was hit by her.",552,Williams,pronoun,passive,4,1.10903617,shift
+3,1,"John hit her, and then John was hit by her.",556,Williams,pronoun,passive,3,-0.04033831,shift
+3,1,"John hit her, and then John was hit by her.",563,Williams,pronoun,passive,1,-1.22548858,noshift
+3,10,"Lucy was counselled by him, and that's why Lucy decided to counsel him.",24,Williams,pronoun,active,12,0.11229104,shift
+3,10,"Lucy was counselled by him, and that's why Lucy decided to counsel him.",541,Williams,pronoun,active,9,-0.21320062,shift
+3,10,"Lucy was counselled by him, and that's why Lucy decided to counsel him.",547,Williams,pronoun,active,9,-0.34845525,noshift
+3,10,"Lucy was counselled by him, and that's why Lucy decided to counsel him.",550,Williams,pronoun,active,9,0.39746739,shift
+3,10,"Lucy was counselled by him, and that's why Lucy decided to counsel him.",555,Williams,pronoun,active,9,-0.41243737,shift
+3,10,"Lucy was counselled by him, and that's why Lucy decided to counsel him.",562,Williams,pronoun,active,12,0.7110727,shift
+3,11,"Andrea mocked her, and later on Andrea was mocked by her.",540,Williams,pronoun,passive,12,0.57042779,shift
+3,11,"Andrea mocked her, and later on Andrea was mocked by her.",544,Williams,pronoun,passive,12,0.7839761,shift
+3,11,"Andrea mocked her, and later on Andrea was mocked by her.",549,Williams,pronoun,passive,12,-0.37275629,shift
+3,11,"Andrea mocked her, and later on Andrea was mocked by her.",554,Williams,pronoun,passive,12,-0.55082287,noshift
+3,11,"Andrea mocked her, and later on Andrea was mocked by her.",558,Williams,pronoun,passive,9,0.28938817,noshift
+3,11,"Andrea mocked her, and later on Andrea was mocked by her.",561,Williams,pronoun,passive,11,1.32327152,shift
+3,12,"Henry was accused by them, and afterwards Henry accused them.",432,Williams,pronoun,active,11,-1.97394003,noshift
+3,12,"Henry was accused by them, and afterwards Henry accused them.",530,Williams,pronoun,active,12,-1.19642951,noshift
+3,12,"Henry was accused by them, and afterwards Henry accused them.",553,Williams,pronoun,active,9,-0.10566591,shift
+3,12,"Henry was accused by them, and afterwards Henry accused them.",557,Williams,pronoun,active,9,-1.09394036,noshift
+3,12,"Henry was accused by them, and afterwards Henry accused them.",560,Williams,pronoun,active,10,-0.50555784,noshift
+3,12,"Henry was accused by them, and afterwards Henry accused them.",564,Williams,pronoun,active,11,-1.14544211,shift
+3,13,"Ron was promoted by her, and then the following week Ron promoted her.",297,Williams,pronoun,active,14,-1.11193186,noshift
+3,13,"Ron was promoted by her, and then the following week Ron promoted her.",529,Williams,pronoun,active,14,-1.26176831,noshift
+3,13,"Ron was promoted by her, and then the following week Ron promoted her.",542,Williams,pronoun,active,16,-0.69172957,shift
+3,13,"Ron was promoted by her, and then the following week Ron promoted her.",552,Williams,pronoun,active,15,-0.52915403,shift
+3,13,"Ron was promoted by her, and then the following week Ron promoted her.",556,Williams,pronoun,active,15,-0.17167989,shift
+3,13,"Ron was promoted by her, and then the following week Ron promoted her.",559,Williams,pronoun,active,15,-0.5517054,noshift
+3,14,"Nina kicked him, then Nina was kicked by him.",24,Williams,pronoun,passive,16,0.76326726,shift
+3,14,"Nina kicked him, then Nina was kicked by him.",524,Williams,pronoun,passive,15,0.35379829,shift
+3,14,"Nina kicked him, then Nina was kicked by him.",541,Williams,pronoun,passive,14,-0.0934064,shift
+3,14,"Nina kicked him, then Nina was kicked by him.",547,Williams,pronoun,passive,14,-0.98445653,shift
+3,14,"Nina kicked him, then Nina was kicked by him.",550,Williams,pronoun,passive,15,-0.31581662,shift
+3,14,"Nina kicked him, then Nina was kicked by him.",555,Williams,pronoun,passive,13,0.00664237,shift
+3,14,"Nina kicked him, then Nina was kicked by him.",562,Williams,pronoun,passive,14,-0.01504533,shift
+3,15,"Daniel followed her, then Daniel was followed by her.",540,Williams,pronoun,passive,13,0.29814076,noshift
+3,15,"Daniel followed her, then Daniel was followed by her.",544,Williams,pronoun,passive,14,-0.16207784,shift
+3,15,"Daniel followed her, then Daniel was followed by her.",549,Williams,pronoun,passive,14,-0.16845492,shift
+3,15,"Daniel followed her, then Daniel was followed by her.",554,Williams,pronoun,passive,15,-1.16302654,shift
+3,15,"Daniel followed her, then Daniel was followed by her.",561,Williams,pronoun,passive,14,0.9117648,shift
+3,16,"Samuel was charmed by them, and then Samuel charmed them.",432,Williams,pronoun,active,16,-0.77229855,noshift
+3,16,"Samuel was charmed by them, and then Samuel charmed them.",530,Williams,pronoun,active,16,1.04891377,shift
+3,16,"Samuel was charmed by them, and then Samuel charmed them.",553,Williams,pronoun,active,16,0.71700525,shift
+3,16,"Samuel was charmed by them, and then Samuel charmed them.",557,Williams,pronoun,active,13,0.34599684000000003,noshift
+3,16,"Samuel was charmed by them, and then Samuel charmed them.",560,Williams,pronoun,active,14,0.33902795,noshift
+3,16,"Samuel was charmed by them, and then Samuel charmed them.",564,Williams,pronoun,active,13,0.43045933,shift
+3,2,"Clara loves them, and Clara is loved by them.",24,Williams,pronoun,passive,4,-0.1487971,shift
+3,2,"Clara loves them, and Clara is loved by them.",541,Williams,pronoun,passive,2,0.82716225,shift
+3,2,"Clara loves them, and Clara is loved by them.",547,Williams,pronoun,passive,4,-0.61853694,shift
+3,2,"Clara loves them, and Clara is loved by them.",550,Williams,pronoun,passive,3,-0.10725418,shift
+3,2,"Clara loves them, and Clara is loved by them.",555,Williams,pronoun,passive,3,-0.25199329,shift
+3,2,"Clara loves them, and Clara is loved by them.",562,Williams,pronoun,passive,3,-0.29939704,shift
+3,3,"Ana was provoked by him, and that's when Ana provoked him.",549,Williams,pronoun,active,2,-0.19714759,shift
+3,3,"Ana was provoked by him, and that's when Ana provoked him.",554,Williams,pronoun,active,4,0.72365398,shift
+3,3,"Ana was provoked by him, and that's when Ana provoked him.",558,Williams,pronoun,active,4,0.36855236,shift
+3,3,"Ana was provoked by him, and that's when Ana provoked him.",561,Williams,pronoun,active,4,-0.05213031,noshift
+3,4,"Darin kissed her, and later Darin was kissed by her.",432,Williams,pronoun,passive,1,-0.67878978,shift
+3,4,"Darin kissed her, and later Darin was kissed by her.",530,Williams,pronoun,passive,2,0.08584009,shift
+3,4,"Darin kissed her, and later Darin was kissed by her.",548,Williams,pronoun,passive,4,0.96694066,shift
+3,4,"Darin kissed her, and later Darin was kissed by her.",557,Williams,pronoun,passive,1,0.23981922,shift
+3,4,"Darin kissed her, and later Darin was kissed by her.",560,Williams,pronoun,passive,2,-0.10723645,shift
+3,4,"Darin kissed her, and later Darin was kissed by her.",564,Williams,pronoun,passive,3,-0.61360676,noshift
+3,5,"Keren was embraced by him, and then Keren embraced him.",297,Williams,pronoun,active,6,-1.12186913,noshift
+3,5,"Keren was embraced by him, and then Keren embraced him.",529,Williams,pronoun,active,8,0.399499,shift
+3,5,"Keren was embraced by him, and then Keren embraced him.",542,Williams,pronoun,active,7,-0.64727501,shift
+3,5,"Keren was embraced by him, and then Keren embraced him.",552,Williams,pronoun,active,5,0.19601966,shift
+3,5,"Keren was embraced by him, and then Keren embraced him.",556,Williams,pronoun,active,8,0.58484827,shift
+3,5,"Keren was embraced by him, and then Keren embraced him.",559,Williams,pronoun,active,5,-0.50366779,shift
+3,6,"Tom was greeted by him, then Tom greeted him.",24,Williams,pronoun,active,8,-0.66968386,noshift
+3,6,"Tom was greeted by him, then Tom greeted him.",541,Williams,pronoun,active,7,-0.4115471,shift
+3,6,"Tom was greeted by him, then Tom greeted him.",547,Williams,pronoun,active,5,-0.97428309,noshift
+3,6,"Tom was greeted by him, then Tom greeted him.",550,Williams,pronoun,active,5,0.24337965,shift
+3,6,"Tom was greeted by him, then Tom greeted him.",555,Williams,pronoun,active,8,-0.70215522,shift
+3,6,"Tom was greeted by him, then Tom greeted him.",562,Williams,pronoun,active,8,-0.71904598,shift
+3,7,"George invited her, and then George was invited by her.",540,Williams,pronoun,passive,8,0.58388187,shift
+3,7,"George invited her, and then George was invited by her.",544,Williams,pronoun,passive,6,-0.2612976,shift
+3,7,"George invited her, and then George was invited by her.",549,Williams,pronoun,passive,7,-0.25717879,shift
+3,7,"George invited her, and then George was invited by her.",554,Williams,pronoun,passive,8,-0.75650908,noshift
+3,7,"George invited her, and then George was invited by her.",558,Williams,pronoun,passive,8,-0.2649678,shift
+3,7,"George invited her, and then George was invited by her.",561,Williams,pronoun,passive,6,0.19792927,shift
+3,8,"Laura was envied by him, and Laura envied him.",432,Williams,pronoun,active,6,-1.17850252,noshift
+3,8,"Laura was envied by him, and Laura envied him.",530,Williams,pronoun,active,5,0.2284333,noshift
+3,8,"Laura was envied by him, and Laura envied him.",548,Williams,pronoun,active,5,1.95115494,shift
+3,8,"Laura was envied by him, and Laura envied him.",553,Williams,pronoun,active,6,0.92126271,noshift
+3,8,"Laura was envied by him, and Laura envied him.",560,Williams,pronoun,active,7,1.11630303,shift
+3,8,"Laura was envied by him, and Laura envied him.",564,Williams,pronoun,active,5,-0.26902109,noshift
+3,9,"Helen praised him, and then Helen was praised by him.",297,Williams,pronoun,passive,11,0.4663209,shift
+3,9,"Helen praised him, and then Helen was praised by him.",529,Williams,pronoun,passive,9,-0.73264923,shift
+3,9,"Helen praised him, and then Helen was praised by him.",542,Williams,pronoun,passive,12,-0.25296022,shift
+3,9,"Helen praised him, and then Helen was praised by him.",552,Williams,pronoun,passive,9,0.92566156,shift
+3,9,"Helen praised him, and then Helen was praised by him.",556,Williams,pronoun,passive,10,-0.6773935,shift
+3,9,"Helen praised him, and then Helen was praised by him.",559,Williams,pronoun,passive,9,-0.94026323,shift
+3,9,"Helen praised him, and then Helen was praised by him.",563,Williams,pronoun,passive,10,0.77474437,noshift
+4,1,"She was hit by John, and then John was hit by her.",432,Contrast,pronoun,passive,2,-0.39439524,noshift
+4,1,"She was hit by John, and then John was hit by her.",530,Contrast,pronoun,passive,1,-0.67962989,noshift
+4,1,"She was hit by John, and then John was hit by her.",548,Contrast,pronoun,passive,2,-0.13318462,noshift
+4,1,"She was hit by John, and then John was hit by her.",553,Contrast,pronoun,passive,3,-0.21224068,noshift
+4,1,"She was hit by John, and then John was hit by her.",557,Contrast,pronoun,passive,3,0.35990267,noshift
+4,1,"She was hit by John, and then John was hit by her.",560,Contrast,pronoun,passive,1,-0.10581498,noshift
+4,1,"She was hit by John, and then John was hit by her.",564,Contrast,pronoun,passive,2,-0.57713416,noshift
+4,10,"He counselled Lucy, and that's why Lucy decided to counsel him.",297,Contrast,pronoun,active,12,-0.30739881,noshift
+4,10,"He counselled Lucy, and that's why Lucy decided to counsel him.",529,Contrast,pronoun,active,11,-1.4213602,noshift
+4,10,"He counselled Lucy, and that's why Lucy decided to counsel him.",542,Contrast,pronoun,active,11,-0.61689339,noshift
+4,10,"He counselled Lucy, and that's why Lucy decided to counsel him.",556,Contrast,pronoun,active,11,-0.24495605,shift
+4,10,"He counselled Lucy, and that's why Lucy decided to counsel him.",559,Contrast,pronoun,active,11,-1.01690468,noshift
+4,11,"She was mocked by Andrea, and later on Andrea was mocked by her.",24,Contrast,pronoun,passive,9,0.03476382,noshift
+4,11,"She was mocked by Andrea, and later on Andrea was mocked by her.",524,Contrast,pronoun,passive,11,0.28441533,noshift
+4,11,"She was mocked by Andrea, and later on Andrea was mocked by her.",547,Contrast,pronoun,passive,12,-1.42134446,noshift
+4,11,"She was mocked by Andrea, and later on Andrea was mocked by her.",550,Contrast,pronoun,passive,12,0.0453251,noshift
+4,11,"She was mocked by Andrea, and later on Andrea was mocked by her.",555,Contrast,pronoun,passive,10,-1.68689356,noshift
+4,11,"She was mocked by Andrea, and later on Andrea was mocked by her.",562,Contrast,pronoun,passive,11,-0.69991657,noshift
+4,12,"They accused Henry, and afterwards Henry accused them.",540,Contrast,pronoun,active,11,-0.69953669,noshift
+4,12,"They accused Henry, and afterwards Henry accused them.",544,Contrast,pronoun,active,10,-0.83524383,noshift
+4,12,"They accused Henry, and afterwards Henry accused them.",549,Contrast,pronoun,active,9,-1.46326911,noshift
+4,12,"They accused Henry, and afterwards Henry accused them.",554,Contrast,pronoun,active,11,-0.892599,noshift
+4,12,"They accused Henry, and afterwards Henry accused them.",558,Contrast,pronoun,active,10,-0.56885085,noshift
+4,12,"They accused Henry, and afterwards Henry accused them.",561,Contrast,pronoun,active,12,-0.89501286,noshift
+4,13,"She promoted Ron, and then the following week Ron promoted her.",432,Contrast,pronoun,active,15,-1.38623514,noshift
+4,13,"She promoted Ron, and then the following week Ron promoted her.",530,Contrast,pronoun,active,14,-0.87660751,noshift
+4,13,"She promoted Ron, and then the following week Ron promoted her.",548,Contrast,pronoun,active,14,-0.08115816,shift
+4,13,"She promoted Ron, and then the following week Ron promoted her.",560,Contrast,pronoun,active,16,-0.89021579,noshift
+4,14,"He was kicked by Nina, and then Nina was kicked by him.",297,Contrast,pronoun,passive,13,-0.11821392,noshift
+4,14,"He was kicked by Nina, and then Nina was kicked by him.",529,Contrast,pronoun,passive,13,-1.47079737,noshift
+4,14,"He was kicked by Nina, and then Nina was kicked by him.",542,Contrast,pronoun,passive,15,-0.29983322,noshift
+4,14,"He was kicked by Nina, and then Nina was kicked by him.",552,Contrast,pronoun,passive,16,-1.47331151,noshift
+4,14,"He was kicked by Nina, and then Nina was kicked by him.",556,Contrast,pronoun,passive,16,-0.72726582,noshift
+4,14,"He was kicked by Nina, and then Nina was kicked by him.",559,Contrast,pronoun,passive,16,-1.69357164,noshift
+4,14,"He was kicked by Nina, and then Nina was kicked by him.",563,Contrast,pronoun,passive,13,-0.1481392,noshift
+4,15,"She was followed by Daniel, then Daniel was followed by her.",24,Contrast,pronoun,passive,13,-0.17380266,noshift
+4,15,"She was followed by Daniel, then Daniel was followed by her.",524,Contrast,pronoun,passive,14,-0.29569019,noshift
+4,15,"She was followed by Daniel, then Daniel was followed by her.",541,Contrast,pronoun,passive,13,-0.65852161,noshift
+4,15,"She was followed by Daniel, then Daniel was followed by her.",547,Contrast,pronoun,passive,16,-0.26214613,noshift
+4,15,"She was followed by Daniel, then Daniel was followed by her.",550,Contrast,pronoun,passive,14,-0.40931365,noshift
+4,15,"She was followed by Daniel, then Daniel was followed by her.",555,Contrast,pronoun,passive,15,-0.93342778,noshift
+4,15,"She was followed by Daniel, then Daniel was followed by her.",562,Contrast,pronoun,passive,16,-0.82709511,noshift
+4,16,"They charmed Samuel, and then Samuel charmed them.",540,Contrast,pronoun,active,16,-0.15007215,noshift
+4,16,"They charmed Samuel, and then Samuel charmed them.",549,Contrast,pronoun,active,16,0.12651816,shift
+4,16,"They charmed Samuel, and then Samuel charmed them.",554,Contrast,pronoun,active,16,1.55439572,shift
+4,16,"They charmed Samuel, and then Samuel charmed them.",558,Contrast,pronoun,active,16,-0.5707269,noshift
+4,16,"They charmed Samuel, and then Samuel charmed them.",561,Contrast,pronoun,active,13,0.48114412,shift
+4,2,"They are loved by Clara, and Clara is loved by them.",297,Contrast,pronoun,passive,3,-0.82877776,noshift
+4,2,"They are loved by Clara, and Clara is loved by them.",529,Contrast,pronoun,passive,3,-1.62124678,shift
+4,2,"They are loved by Clara, and Clara is loved by them.",542,Contrast,pronoun,passive,3,-0.51973825,noshift
+4,2,"They are loved by Clara, and Clara is loved by them.",552,Contrast,pronoun,passive,3,-0.25059456,noshift
+4,2,"They are loved by Clara, and Clara is loved by them.",556,Contrast,pronoun,passive,4,-0.31635533,noshift
+4,2,"They are loved by Clara, and Clara is loved by them.",559,Contrast,pronoun,passive,3,-1.17331263,noshift
+4,2,"They are loved by Clara, and Clara is loved by them.",563,Contrast,pronoun,passive,3,-0.42090651,noshift
+4,3,"He provoked Ana, and that's when Ana provoked him.",24,Contrast,pronoun,active,2,-0.02567554,noshift
+4,3,"He provoked Ana, and that's when Ana provoked him.",541,Contrast,pronoun,active,4,0.44158699,shift
+4,3,"He provoked Ana, and that's when Ana provoked him.",547,Contrast,pronoun,active,1,-1.99660886,noshift
+4,3,"He provoked Ana, and that's when Ana provoked him.",550,Contrast,pronoun,active,4,-0.28490908,noshift
+4,3,"He provoked Ana, and that's when Ana provoked him.",555,Contrast,pronoun,active,1,-1.15993012,noshift
+4,3,"He provoked Ana, and that's when Ana provoked him.",562,Contrast,pronoun,active,2,-0.56394527,noshift
+4,4,"She was kissed by Darin, and later Darin was kissed by her.",540,Contrast,pronoun,passive,1,0.01618791,shift
+4,4,"She was kissed by Darin, and later Darin was kissed by her.",549,Contrast,pronoun,passive,1,-0.80350357,noshift
+4,4,"She was kissed by Darin, and later Darin was kissed by her.",554,Contrast,pronoun,passive,3,-1.14656238,noshift
+4,4,"She was kissed by Darin, and later Darin was kissed by her.",558,Contrast,pronoun,passive,3,-0.14099625,noshift
+4,4,"She was kissed by Darin, and later Darin was kissed by her.",561,Contrast,pronoun,passive,1,0.79882958,noshift
+4,5,"He embraced Keren, and then Keren embraced him.",432,Contrast,pronoun,active,8,-1.21643596,noshift
+4,5,"He embraced Keren, and then Keren embraced him.",530,Contrast,pronoun,active,8,-1.18159962,noshift
+4,5,"He embraced Keren, and then Keren embraced him.",548,Contrast,pronoun,active,7,0.14742627,shift
+4,5,"He embraced Keren, and then Keren embraced him.",553,Contrast,pronoun,active,5,-0.36693209,noshift
+4,5,"He embraced Keren, and then Keren embraced him.",557,Contrast,pronoun,active,5,-0.22596747,noshift
+4,5,"He embraced Keren, and then Keren embraced him.",560,Contrast,pronoun,active,8,-0.60092608,noshift
+4,5,"He embraced Keren, and then Keren embraced him.",564,Contrast,pronoun,active,6,-0.20891937,noshift
+4,6,"He greeted Tom, then Tom greeted him.",297,Contrast,pronoun,active,7,-1.46541577,noshift
+4,6,"He greeted Tom, then Tom greeted him.",529,Contrast,pronoun,active,6,-1.70181322,noshift
+4,6,"He greeted Tom, then Tom greeted him.",542,Contrast,pronoun,active,8,-1.21374004,noshift
+4,6,"He greeted Tom, then Tom greeted him.",552,Contrast,pronoun,active,8,-2.54053141,noshift
+4,6,"He greeted Tom, then Tom greeted him.",556,Contrast,pronoun,active,6,-1.61920647,noshift
+4,6,"He greeted Tom, then Tom greeted him.",559,Contrast,pronoun,active,8,0.06719583,noshift
+4,6,"He greeted Tom, then Tom greeted him.",563,Contrast,pronoun,active,6,-0.84846937,noshift
+4,7,"She was invited by George, and then George was invited by her.",24,Contrast,pronoun,passive,5,-0.37922183,noshift
+4,7,"She was invited by George, and then George was invited by her.",524,Contrast,pronoun,passive,8,-0.30814378,noshift
+4,7,"She was invited by George, and then George was invited by her.",541,Contrast,pronoun,passive,6,-1.04211474,noshift
+4,7,"She was invited by George, and then George was invited by her.",547,Contrast,pronoun,passive,8,-1.97214282,noshift
+4,7,"She was invited by George, and then George was invited by her.",550,Contrast,pronoun,passive,8,-1.14611553,noshift
+4,7,"She was invited by George, and then George was invited by her.",555,Contrast,pronoun,passive,7,-0.57500448,noshift
+4,7,"She was invited by George, and then George was invited by her.",562,Contrast,pronoun,passive,5,-1.43212621,noshift
+4,8,"He envied Laura, and Laura envied him.",540,Contrast,pronoun,active,5,0.25792634,noshift
+4,8,"He envied Laura, and Laura envied him.",544,Contrast,pronoun,active,7,-0.76799598,noshift
+4,8,"He envied Laura, and Laura envied him.",549,Contrast,pronoun,active,8,-0.717958,noshift
+4,8,"He envied Laura, and Laura envied him.",554,Contrast,pronoun,active,6,0.36657376,noshift
+4,8,"He envied Laura, and Laura envied him.",558,Contrast,pronoun,active,7,0.38151925,noshift
+4,8,"He envied Laura, and Laura envied him.",561,Contrast,pronoun,active,5,-0.1433003,noshift
+4,9,"He was praised by Helen, and then Helen was praised by him.",432,Contrast,pronoun,passive,9,-0.99500076,noshift
+4,9,"He was praised by Helen, and then Helen was praised by him.",530,Contrast,pronoun,passive,9,-0.21751833,noshift
+4,9,"He was praised by Helen, and then Helen was praised by him.",548,Contrast,pronoun,passive,9,0.39976328,noshift
+4,9,"He was praised by Helen, and then Helen was praised by him.",553,Contrast,pronoun,passive,11,-0.09692137,noshift
+4,9,"He was praised by Helen, and then Helen was praised by him.",557,Contrast,pronoun,passive,12,0.57163033,noshift
+4,9,"He was praised by Helen, and then Helen was praised by him.",560,Contrast,pronoun,passive,11,-0.6504917,noshift
+4,9,"He was praised by Helen, and then Helen was praised by him.",564,Contrast,pronoun,passive,10,0.2810099,noshift

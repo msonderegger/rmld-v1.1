@@ -1,0 +1,1076 @@
+---
+title: 'Appendix to Chapter 10'
+author: "M. Sonderegger"
+date: "`r format(Sys.time(), '%d/%m/%y')`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+```
+
+This document fits models used in Chapter 10 of *Regression Modeling for Linguistic Data*, and fills out some sections with more detail (e.g. full model summaries).
+
+Note that some models are fitted with `evaluate()` calls (from the 'evaluate' package), which save the model's output in a way that lets me recreate warnings/messages in fitting in the text of Chapter 10 (the `replay()` calls), without having to actually rerun the models. See comments in the Rnw file code, around line 50, for more detail.
+
+If you are using this Rmd file in isolation, you could just fit the models without the `evaluate()`/`replay()` calls (e.g. run `set.seed(101)` instead of `t1 <- evaluate("set.seed(101); replay(t1)")`.
+
+# Preliminaries
+
+Load packages, set default contrasts to Helmert, explicitly set contrasts for factors, load datasets (see beginning of Chapter 10 for context):
+
+```{r, cache=FALSE, message=FALSE}
+library(tidyverse)
+library(broom)
+library(arm)
+library(lme4)
+library(car)
+library(broom.mixed)
+library(languageR)
+library(evaluate)
+```
+
+```{r}
+# default contrasts = helmert
+options(contrasts = c("contr.helmert", "contr.poly"))
+
+vot <- read.csv("data/vot_rmld.csv", stringsAsFactors = TRUE)  %>%
+    # relevel place to be labial < alveolar < velar
+  mutate(place=fct_relevel(place, "labial")) %>%
+  mutate(log_corpus_freq = rescale(log_corpus_freq),
+         speaking_rate_dev = rescale(speaking_rate_dev),              
+         ## yes > no
+         foll_high_vowel = rescale(foll_high_vowel),
+         ## yes > no
+         cons_cluster = rescale(cons_cluster),
+         # male > female
+         gender = rescale(gender), 
+         ## stressed > unstress
+         stress = rescale(stress))
+
+contrasts(vot$place) <- contr.helmert(3)
+
+diatones <- read.csv("data/diatones_rmld.csv", stringsAsFactors = TRUE) %>%
+  mutate(
+    syll1_coda_orig = syll1_coda,
+    syll2_coda_orig = syll2_coda,
+    syll2_td_orig = syll2_td,
+    ## turns no/yes -> 0/1, then center
+    syll1_coda = rescale(syll1_coda_orig),
+    ## code '0'/'C'/'CC'/'CCC' as ordered factor-> 0/1/2/3,
+    ## then standardize
+    syll2_coda = rescale(str_count(syll2_coda_orig, "C")),
+    syll2_td = rescale(syll2_td_orig),
+    frequency = rescale(frequency)
+  )
+
+neutralization <- read.csv('data/neutralization_rmld.csv', 
+  stringsAsFactors = TRUE) %>%
+  ## factor version of voicing, with voiceless < voiced
+  mutate(voicing_fact = fct_relevel(voicing, 'voiceless'))
+
+neutralization <- neutralization %>% filter(!is.na(prosodic_boundary))
+
+neutralization <-   
+  mutate(neutralization, 
+         prosodic_boundary = rescale(prosodic_boundary),
+         ## voiced > voiceless
+         voicing = rescale(voicing_fact),
+         ## make sure grouping factors are factors
+         item_pair = as.factor(item_pair),
+         subject=as.factor(subject)
+  )
+
+# Explicitly set contrasts, as discussed at beginning of Chapter 8
+contrasts(neutralization$voicing_fact) <- contr.helmert(2)
+contrasts(neutralization$place) <- contr.helmert(3)
+contrasts(neutralization$vowel) <- contr.helmert(5)
+
+
+givenness <- read.csv('data/givenness_rmld.csv', stringsAsFactors = TRUE) %>%
+  mutate(
+    clabel.williams = arm::rescale(conditionLabel),
+    npType.pronoun = arm::rescale(npType),
+    voice.passive = arm::rescale(voice),
+    order.std = arm::rescale(order),
+    shifted = (as.numeric(stressshift) - 1),
+    ## make sure that grouping factors are factors
+    item = as.factor(item),
+    participant=as.factor(participant)
+  )
+
+turkish_if0 <- read.csv("data/turkish_if0_rmld.csv", stringsAsFactors = TRUE)
+
+## redefine contrast matrix for basevowel
+contrMat <- matrix(c(-2/3, 1/3, 1/3, 0, -1/2, 1/2), ncol=2)
+rownames(contrMat) <- c('A','I','U')
+colnames(contrMat) <- c('AvIU', 'IvU')
+contrasts(turkish_if0$base_vowel) <- contrMat
+
+## standardize predictors
+turkish_if0 <- turkish_if0 %>% 
+  mutate(utterance_num_syllables = arm::rescale(utterance_num_syllables),
+         speaker_mean_f0 = arm::rescale(speaker_mean_f0),
+         ## voiceless = pos, voiced = neg
+         Voicing.vl = arm::rescale(Voicing),
+         ## male = pos, female = neg
+         gender.male=arm::rescale(gender),
+         arm::rescale(local_f0)
+  )
+```
+
+# Convergence: problems with the data or model
+
+## diatones: problem with the data
+
+The original model was:
+
+```{r}
+diatones_melr <- glmer(formula = stress_shifted ~ syll2_coda + 
+syll2_td + frequency + syll1_coda + syll2_td:frequency +
+  frequency:syll1_coda + (1|prefix), family = "binomial", data = diatones)
+summary(diatones_melr, correlation=FALSE)
+```
+
+Refit this model with the version of the `syll2_coda` predictor which is a factor with 4 levels:
+
+```{r}
+levels(diatones$syll2_coda_orig)
+diatones_melr_bad_eval <- evaluate("diatones_melr_bad <- update(diatones_melr, . ~ . - syll2_coda + syll2_coda_orig)")
+replay(diatones_melr_bad_eval)
+```
+
+This model doesn't converge.  The fixed-effect estimates suggest why (separable data):
+
+```{r}
+summary(diatones_melr_bad, correlation=FALSE)
+```
+
+## vot: problem with model specification
+
+Subset of the VOT data used in Chapter 8:
+
+```{r}
+core_speakers <- c("dale", "darnell", "lisa", "luke", "michael",
+                       "mohamed", "rachel", "rebecca", "rex", "sara", "stuart")
+    
+vot_voiced_core <- vot %>% 
+  filter(syll_length==1 & speaker %in% core_speakers & 
+           voicing=='voiced') %>% droplevels()
+```
+
+The final model fitted to this data in Chapter 8 was:
+
+```{r}
+vot_mod3 <- lmer(log_vot ~ speaking_rate_dev + foll_high_vowel + cons_cluster +  
+    log_corpus_freq + place + gender + (1 | word) + (1 + speaking_rate_dev |  
+    speaker), data=vot_voiced_core
+)
+```
+
+A model with by-speaker and (incorrectly) by-word random slopes for `place` is:
+
+```{r}
+vot_mod3_bad_eval <- evaluate("vot_mod3_bad <- lmer(log_vot ~ speaking_rate_dev + foll_high_vowel + cons_cluster + 
+  log_corpus_freq + place + gender + 
+(1+speaking_rate_dev+place|speaker) + (1+place|word), data=vot_voiced_core)")
+replay(vot_mod3_bad_eval)
+```
+
+Note that nothing in the model output suggests the problem:
+
+```{r}
+summary(vot_mod3_bad, correlation=FALSE)
+```
+
+
+Refitting the model without this term (and changing the optimizer, necessary for convergence):
+
+```{r}
+vot_mod3_placeRanef <-lmer(log_vot ~ speaking_rate_dev + foll_high_vowel + cons_cluster + 
+  log_corpus_freq + place + gender + 
+(1+speaking_rate_dev+place|speaker) + (1|word), control=lmerControl(optimizer = "bobyqa"), data=vot_voiced_core)
+
+summary(vot_mod3_placeRanef, correlation=FALSE)
+```
+
+
+# Convergence: optimization problems
+
+Refit the VOT model, but now for *all* speakers, all words with `voicing`=voiced.  This includes words with multiple syllables, so we now need the `stress` predictor, which we omitted when fitting `vot_mod3` because it has the same value for all single-syllable words.
+
+This model does not converge:
+
+```{r}
+vot_voiced <- filter(vot, voicing=='voiced')
+
+vot_mod3_full_eval <- evaluate("vot_mod3_full <- update(vot_mod3, . ~ . + stress, data=vot_voiced)")
+replay(vot_mod3_full_eval)
+```
+
+
+## Changing start values
+
+We can simply restart the fit from the original values:
+
+```{r}
+fittedVals <- getME(vot_mod3_full,"theta")
+  vot_mod3_full_1_eval <- 
+    evaluate("vot_mod3_full_1 <- update(vot_mod3_full, start=fittedVals)")
+  replay(vot_mod3_full_1_eval)
+  ```
+
+Or slightly perturbed values:
+
+```{r}
+set.seed(101)
+ pars<- getME(vot_mod3_full,"theta")
+fittedVals_perturbed <- runif(length(pars),pars/1.01,pars*1.01)
+fittedVals_perturbed <- runif(length(pars),pars/1.01,pars*1.01)*sign(pars) 
+# sign(pars) makes this work when some fixed effects are negative
+  vot_mod3_full_2_eval <- evaluate("vot_mod3_full_2 <- update(vot_mod3_full, start=fittedVals_perturbed)")
+  replay(vot_mod3_full_2_eval)
+```
+
+Either way, we get an identical model to the one that didn't converge. To check this, examine the log-likelihood and fixed effects (faster than examining \ttt{summary} for each model):
+
+```{r}
+logLik(vot_mod3_full_1)
+logLik(vot_mod3_full)
+compareCoefs(vot_mod3_full_1, vot_mod3_full, zvals = TRUE)
+```
+
+(Technically we should examine the random effect estimates as well.)
+
+## Decrease stopping tolerances
+
+We could alternatively  decrease the optimizer's stopping tolerances (see `?convergence`):
+
+```{r}
+strict_tol <- lmerControl(optCtrl=list(xtol_abs=1e-8, ftol_abs=1e-8))
+
+## refit the model with these tolerances
+vot_mod3_full_3_eval <- evaluate("vot_mod3_full_3 <- update(vot_mod3_full, control=strict_tol)")
+replay(vot_mod3_full_3_eval)
+```
+
+This does converge, and again gives the same fit:
+
+```{r}
+logLik(vot_mod3_full_2)
+logLik(vot_mod3_full)
+compareCoefs(vot_mod3_full_2, vot_mod3_full, zvals = TRUE)
+```
+
+## Increasing iterations
+
+The maximum number of iterations is another parameter that can be increased for a more accurate fit, at the expense of the model possibly taking longer to run. 
+
+For example, consider our model of the \ttt{givenness} data from the last chapter, now fitted with maximal random effect structure (all possible slopes, correlations):
+
+```{r}
+giv_maximal_bad_eval <- evaluate("giv_maximal <- glmer(stressshift ~ clabel.williams*voice.passive + 
+npType.pronoun + (1+clabel.williams+ npType.pronoun|item) +
+(1 +clabel.williams*voice.passive + npType.pronoun |participant),
+data=givenness, family='binomial', control=glmerControl(optimizer = 'bobyqa'))")
+replay(giv_maximal_bad_eval)
+```
+
+This doesn't converge in the default maximum number of iterations:
+
+```{r}
+giv_maximal@optinfo$feval ## maximum iterations = 10000
+```
+
+If we increase this parameter, the model converges:
+
+```{r}
+# change maximum iterations to 100000
+giv_maximal <- update(giv_maximal, 
+control=glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=100000)))
+
+giv_maximal@optinfo$feval ## iterations to convergence
+```
+
+# Convergence: standardizing predictors
+
+Consider the new VOT model from above `vot_mod_full`,  but now fitted with maximal random effect structure.  First, suppose we tried to fit this model with non-standardized predictors: all continuous variables not centered or scaled, and all factors with treatment coding:
+
+```{r}
+## load the data
+vot_unstd <- read.csv("data/vot_rmld.csv", stringsAsFactors = TRUE)  %>%
+    # relevel place to be labial < alveolar < velar
+  mutate(place=fct_relevel(place, "labial"))
+
+## because factors have Helmert coding by default, we have to reset all factors to treatment coding:
+
+contrasts(vot_unstd$foll_high_vowel) <- contr.treatment(2)
+contrasts(vot_unstd$cons_cluster) <- contr.treatment(2)
+contrasts(vot_unstd$place) <- contr.treatment(3)
+contrasts(vot_unstd$gender) <- contr.treatment(2)
+contrasts(vot_unstd$stress) <- contr.treatment(2)
+
+## fit the model:
+system.time(
+  vot_mod_maximal_unstd <- lmer(log_vot ~ speaking_rate_dev + foll_high_vowel + cons_cluster +  log_corpus_freq + place + gender + stress +
+                                  (1 + gender + speaking_rate_dev |  word) + 
+                                  (1 + speaking_rate_dev + foll_high_vowel + cons_cluster +  log_corpus_freq + place + stress| speaker), data=filter(vot_unstd, voicing=='voiced')
+  )
+)
+summary(vot_mod_maximal_unstd, correlation=FALSE)
+```
+
+<!-- (We time this model, and the one below, to give numbers which are referred to in Chapter 10.) -->
+
+This model does not converge, but refitting with *standardized* predictors, it does:
+
+```{r}
+system.time(
+  vot_mod_maximal <- lmer(log_vot ~ speaking_rate_dev + foll_high_vowel + cons_cluster +  log_corpus_freq + place + gender +  stress +
+                            (1 + gender + speaking_rate_dev |  word) + 
+                            (1 + speaking_rate_dev + foll_high_vowel + cons_cluster +  log_corpus_freq + place + stress| speaker), data=vot_voiced)
+)
+summary(vot_mod_maximal, correlation=FALSE)
+```
+
+# Convergence: Changing the optimizer
+
+Our model of the `givenness` data from Chapter 9 was:
+
+```{r}
+givenness_m1 <- glmer(stressshift ~ clabel.williams*voice.passive+npType.pronoun + 
+                  (1 + clabel.williams +npType.pronoun||item) +
+                  (1 + clabel.williams*voice.passive + +npType.pronoun||participant),
+                data=givenness, 
+                family="binomial", 
+                control=glmerControl(optimizer = "bobyqa"))
+```
+
+We needed to change the optimizer from the default to make it converge:
+
+```{r}
+givenness_m1 <- glmer(stressshift ~ clabel.williams*voice.passive+npType.pronoun + 
+                  (1 + clabel.williams +npType.pronoun||item) +
+                  (1 + clabel.williams*voice.passive + +npType.pronoun||participant),
+                data=givenness, 
+                family="binomial")
+```
+
+Refit the model using all possible optimizers:
+
+```{r}
+giv_m1.all <- allFit(givenness_m1)
+```
+
+This object contains elements comparing the models' fixed effects, likelihoods, convergence messages, etc. (see `?allFit`)
+
+```{r}
+summary(giv_m1.all)
+```
+
+For example, to examine just the log-likelihoods and fixed effects of the models fitted with each optimizer:
+
+```{r}
+summary(giv_m1.all)$llik
+summary(giv_m1.all)$fixef
+```
+
+If the models fitted with different optimizers are identical it's safe to assume non-convergence was a false positive. If the models are identical except for the one with the default optimizer that didn't converge, it is probably OK to use a convergent model (fitted by a non-default method).
+
+# Convergence: Simplifying random effect structure
+
+Consider the `diatones` model from above (`diatones_melr`), but refitted with maximal random effect structure:
+
+```{r}
+diatones_melr_max_eval <- evaluate("diatones_melr_max <- update(diatones_melr, . ~ . - (1 | prefix) + 
+(1+syll2_coda + syll2_td + frequency + syll2_td:frequency|prefix),
+control=glmerControl( optCtrl=list(maxfun=100000)))")
+replay(diatones_melr_max_eval)
+summary(diatones_melr_max, correlation=FALSE)
+```
+
+Highly degenerate random effects. Let's try iteratively removing correlations terms.  Remove correlations with the `syll2_td:frequency` random slope first (this must be done before trying `syll2_td` or `frequency`):
+
+```{r}
+diatones_melr_max_2 <- update(diatones_melr_max, . ~ . -(1 + syll2_coda + syll2_td + frequency + syll2_td:frequency |  
+        prefix) + (1 + syll2_coda + syll2_td + frequency|  
+        prefix) + (0+syll2_td:frequency||prefix))
+summary(diatones_melr_max_2, correlation=FALSE)
+```
+
+There are still several near-perfect correlations.  Let's next try removing correlations with `syll2_td`, which looks worst:
+
+```{r}
+diatones_melr_max_3 <- update(diatones_melr_max_2, . ~ . - (1 + syll2_coda + syll2_td + frequency | prefix) + (1 + syll2_coda +   frequency | prefix) + (0+syll2_td||prefix))
+                              
+summary(diatones_melr_max_3, correlation=FALSE)
+```
+
+There are no longer near-perfect correlations, but the model still doesn't converge.  Trying the optimizer tricks above doesn't make the model converge (not shown), suggesting the random effect structure is still too complex---which makes sense, given how small the dataset is.  We can also see this by examining the principal components of the random effects (as suggested by Bates et. al 2015) using \ttt{rePCA()}:
+
+```{r}
+rePCA(diatones_melr_max_3)
+```
+
+The last principal component has near-zero standard deviation, meaning it accounts for $\sim$no variance, so the random effects are near-singular.
+
+We next remove correlations with the `frequency` random slope (which has lower variance than the `syll2_coda` slope):
+
+```{r}
+diatones_melr_max_4 <- update(diatones_melr_max_3, . ~ . - (1 + syll2_coda +   frequency | prefix) + (1 + syll2_coda | prefix)  + (0+frequency||prefix))
+
+```
+
+Removing the last correlation term gives us the model with all possible random slopes, and uncorrelated random effects:
+
+```{r}
+diatones_melr_max_uncorr_eval <- evaluate("diatones_melr_max_uncorr <- update(diatones_melr, . ~ .
+- (1 | prefix) + (1+syll2_coda + syll2_td + frequency +syll2_td:frequency||prefix))")
+summary(diatones_melr_max_uncorr)
+replay(diatones_melr_max_uncorr_eval)
+```
+
+This model does converge, though it is now singular due to some variance components estimated as zero.
+ 
+# Singular models
+
+## givenness: simplifying random effects
+ 
+Our `maximal` model of the `givenness` data, `giv_maximal`, is singular, due to perfect correlations among the by-item random effects:
+
+```{r}
+summary(giv_maximal)$varcor
+```
+
+
+We first remove the correlations with the random slope of `npType.pronoun`, a control predictor:
+
+```{r}
+giv_ch10_2_eval <- evaluate("giv_ch10_2 <- update(giv_maximal, . ~ . -
+(1 + clabel.williams + npType.pronoun | item) + 
+(1 + clabel.williams|item) + (0+npType.pronoun|item))")
+replay(giv_ch10_2_eval)
+summary(giv_ch10_2)$varcor
+```
+
+The resulting model still has a perfect correlation among the by-item random effects, which we remove:
+
+```{r}
+giv_ch10_3_eval <- evaluate("giv_ch10_3 <- update(giv_ch10_2, . ~ . - (1 + clabel.williams| item) + 
+(1 + clabel.williams||item))")
+replay(giv_ch10_3_eval)
+```
+
+
+The resulting model has no more perfect correlations:
+
+```{r}
+summary(giv_ch10_3)$varcor
+```
+
+
+It is still singular, due to the by-item random intercept, even after we remove the zero by-item random intercept (which is optional):
+
+```{r}
+giv_ch10_4_eval <- evaluate("giv_ch10_4 <- update(giv_ch10_3, . ~ . - (1 + clabel.williams|| item) +
+(0 + clabel.williams||item))")
+replay(giv_ch10_4_eval)
+```
+
+
+This is an interesting case, because there are no remaining zero variances or perfect correlations. Instead, the by-subject random effects are overparametrized---which makes sense, as this is a small dataset---in some way which is not clear from the model table. This can also be verified by examining the random effects PCA, where one component accounts for no variance:
+
+```{r}
+rePCA(giv_ch10_4)$participant
+```
+
+It would be possible to proceed more incrementally (see below); here, let's just try removing all correlation terms:
+
+```{r}
+giv_ch10_5_eval <- evaluate("giv_ch10_5 <- update(giv_ch10_4, . ~ . -
+(1 + clabel.williams * voice.passive + npType.pronoun | participant)  + 
+(1 + clabel.williams*voice.passive + npType.pronoun || participant))")
+replay(giv_ch10_5_eval)
+```
+
+# Model selection: bad models
+
+## `diatones`
+
+The diatones model with maximal random effect structure does converge if we change the optimizer:
+
+```{r}
+diatones_melr_max_bobyqa_eval <- evaluate(
+"diatones_melr_max_bobyqa <- update(diatones_melr, . ~ . - 
+(1 | prefix) + (1+syll2_coda + syll2_td + frequency + syll2_td:frequency|prefix), 
+control=glmerControl(optimizer = 'bobyqa'))")
+replay(diatones_melr_max_bobyqa_eval)
+```
+
+## `neutralization`
+
+Our intercepts-only model of the neutralization data is:
+
+```{r}
+neut_ch10_m1 <- lmer(vowel_dur ~ voicing*prosodic_boundary + place + vowel + (1 |  
+    subject) + (1 | item_pair), data=neutralization)
+```
+
+Let us decide what random slopes to add by the following "forward" data-driven method:
+
+* For each possible random slope term $Z$:
+  * Try refitting the model with $Z$, to get $M_2$
+  * Do a likelihood-ratio test comparing $M_2$ and the model, giving a $p$-value
+* For the term with the lowest $p$-value: if $p<0.05$, and $M_2$ converges and is not singular, keep $Z$ in the model.
+* Repeat, now using the model including $Z$ as the base model
+
+This is the forwards "best-path" algorithm of Barr et al. (2013). In this example we assume that "adding a random slope" means adding all associated correlation terms as well.
+
+### Step 1
+
+By-speaker random slope of `voicing`: $p=0.04$
+
+```{r}
+anova(neut_ch10_m1,
+      update(neut_ch10_m1, . ~ . -(1|subject) + (1+voicing|subject)),
+      refit=FALSE
+)
+```
+
+By-speaker random slope of `vowel`: $p<0.001$
+
+```{r}
+anova(neut_ch10_m1,
+      update(neut_ch10_m1, . ~ . -(1|subject) + (1+vowel|subject)),
+      refit=FALSE
+)
+```
+
+$p>0.05$ for adding any other possible random slope:
+
+```{r}
+## prosodic_boundary, by-subject
+anova(neut_ch10_m1,
+      update(neut_ch10_m1, . ~ . -(1|subject) + (1+prosodic_boundary|subject)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+
+## place, by-subject
+anova(neut_ch10_m1,
+      update(neut_ch10_m1, . ~ . -(1|subject) + (1+place|subject)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+
+## voicing, by-item
+anova(neut_ch10_m1,
+      update(neut_ch10_m1, . ~ . -(1|item_pair) + (1+voicing|item_pair)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+
+## prosodic boundary, by-item
+anova(neut_ch10_m1,
+      update(neut_ch10_m1, . ~ . -(1|item_pair) + (1+prosodic_boundary|item_pair)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+```
+
+So the lowest $p$-value was from adding the by-subject random slope for `vowel`, and our interim model is:
+
+```{r}
+neut_ch10_m2 <- update(neut_ch10_m1, . ~ . -(1|subject) + (1+vowel|subject))
+```
+
+### Step 2
+
+Do the same exercise for each possible random slope:
+
+```{r}
+## voicing, by-subject
+anova(neut_ch10_m2,
+      update(neut_ch10_m2, . ~ . -(1+vowel|subject) + (1+vowel+voicing|subject)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+
+## prosodic_boundary, by-subject
+anova(neut_ch10_m2,
+      update(neut_ch10_m2, . ~ . -(1+vowel|subject) + (1+vowel+prosodic_boundary|subject)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+
+## place, by-subject
+anova(neut_ch10_m2,
+      update(neut_ch10_m2, . ~ . -(1+vowel|subject) + (1+place+vowel|subject)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+
+## voicing, by-item
+anova(neut_ch10_m2,
+      update(neut_ch10_m2, . ~ . -(1|item_pair) + (1+voicing|item_pair)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+
+## prosodic boundary, by-item
+anova(neut_ch10_m2,
+      update(neut_ch10_m2, . ~ . -(1|item_pair) + (1+prosodic_boundary|item_pair)),
+      refit=FALSE
+)$`Pr(>Chisq)`[2]
+```
+
+$p$ is always $>0.05$, so we do not add any random slopes, and `neut_ch10_m2` is the final model.
+
+## `turkish_if0`
+
+## Underfitted fixed effects
+
+A minimal model for the `turkish_if0` data, following these principles: `Voicing.vl` effect is of primary interest; must at least include random slopes for effect of primary interest; must account for all sources of non-independence (here: word, consonant, speaker).
+
+```{r}
+
+if0_bad_model <- lmer(f0 ~ Voicing.vl + (1+Voicing.vl|speaker) + (1|word) + (1|consonant), data=turkish_if0)
+```
+
+Suppose we have chosen $\alpha=0.01$, in light of doing some exploratory analysis beforehand. The `Voicing.vl` effect is then not significant:
+
+```{r}
+
+
+summary(if0_bad_model, correlation=FALSE)
+```
+
+This model is *underconfident* about the effect of `Voicing.vl`. As we'll see below, the effect is much clearer (higher $|t|$) in a better model, which accounts for other factors affecting `f0`.  
+
+## Overfitted fixed effects
+
+At the other extreme, given our interest in \ttt{Voicing.vl}, we might play it safe by using a "maximal" fixed effect structure: including all accounting for all its possible interactions with  control predictors, up to three-way interactions:
+
+```{r}
+
+
+if0_bad_model_2 <- lmer(f0 ~ Voicing.vl*(utterance_num_syllables +  base_vowel + gender.male +  
+    local_f0)^2 + (1+Voicing.vl|speaker) + (1|word) + (1|consonant), data=turkish_if0)
+```
+
+The resulting model has 30 fixed-effect terms, of which 15 involve `Voicing` and most are not significant:
+
+```{r}
+
+
+summary(if0_bad_model_2, correlation=FALSE)
+```
+
+This model is overfitted, and too complex to give insight into the research question ("effect of Voicing").
+
+
+
+# Model selection: case studies
+
+## Case Study 1: `givenness`, maximal, backwards
+
+- Our goal is to fit a model with "as maximal as possible" random effect structure. In attempting to get a non-singular fit, we ended up with `giv_ch10_4` above, where the by-participant random effects are still overparametrized.
+
+We might first try removing correlations with the by-participant `npType.pronoun` slope, which is a control predictor (this is 2(b) from Table 7.1 in the text):
+
+```{r}
+giv_ch10_6 <- update(giv_ch10_4, . ~ . -(1 + clabel.williams * voice.passive + npType.pronoun | participant) + (1 + clabel.williams * voice.passive | participant)  + (0+npType.pronoun||participant))
+```
+
+By-participant random effects are still overparametrized:
+```{r}
+summary(giv_ch10_6)$varcor
+```
+
+To simplify further, while respecting hierarchy, we can only remove correlations with the random slope of the interaction (2(b) from Table 7.1  in the text):
+
+```{r}
+giv_ch10_7 <- update(giv_ch10_6, . ~ . -(1 + clabel.williams * voice.passive | participant) + (1 + clabel.williams + voice.passive | participant)  + (0+clabel.williams:voice.passive||participant))
+
+```
+
+The by-participant random effects are still overparametrized:
+
+```{r}
+summary(giv_ch10_7)$varcor
+```
+
+At this point, it's not clear how to proceed.  Both voice.passive and clabel.williams are critical predictors, so we shouldn't remove their slopes (2(a) from Table 7.1) and there are not correlation terms which we have reason to think are zero (2(b)). So we can remove all remaining correlations (2(b)):
+
+```{r}
+giv_ch10_8 <- update(giv_ch10_7, . ~ . -(1 + clabel.williams +voice.passive| participant)  + (0+clabel.williams+voice.passive||participant))
+
+```
+
+We could alternatively just remove the perfect correlation term:
+
+```{r}
+giv_ch10_9 <- update(giv_ch10_7, . ~ . -(1 + clabel.williams +voice.passive| participant)  + (1+voice.passive|participant) + (0+clabel.williams||participant))
+
+```
+
+The resulting models are very similar:
+```{r}
+summary(giv_ch10_8, correlation=FALSE)
+summary(giv_ch10_9, correlation=FALSE)
+```
+
+They are also very similar to the maximal model with uncorrelated random effects (`givenness_m1`), modulo the zero by-participant random effect.
+
+(Note that we don't remove the by-participant \ttt{clabel.williams}, as it is a critical predictor.)
+
+##  Case study 2: `turkish_if0`, data-driven, forwards
+
+Base model, random intercepts only:
+
+```{r}
+
+
+if0_m0 <- lmer(f0 ~ utterance_num_syllables + Voicing.vl*base_vowel + gender.male+ local_f0 + (1|speaker) +(1|consonant) + (1|word), data=turkish_if0)
+```
+
+### Critical predictors
+
+We now try adding in random slopes, one at a time, starting with those related to research questions: `Voicing.vl`, `base_vowel`, their interaction:
+
+By-speaker random slope of `Voicing.vl`:
+
+```{r}
+
+
+newMod1 <- update(if0_m0, . ~ . - (1|speaker) + (1+Voicing.vl|speaker))
+anova(if0_m0, newMod1, refit=FALSE)
+```
+
+By-speaker random slope of `base_vowel`:
+
+```{r}
+
+
+newMod2 <- update(if0_m0, . ~ . - (1|speaker) + (1+base_vowel|speaker))
+anova(if0_m0, newMod2, refit=FALSE)
+```
+
+By-consonant random slope of `base_vowel`:
+
+```{r}
+
+
+newMod3 <- update(if0_m0, . ~ . - (1|consonant) + (1+base_vowel|consonant))
+anova(if0_m0, newMod3, refit=FALSE)
+```
+
+Since $p>0.2$, we try uncorrelated random effects:
+
+```{r}
+
+
+newMod4 <- update(if0_m0, . ~ . - (1|consonant) + (1+base_vowel_AvIU+ base_vowel_IvU||consonant))
+anova(if0_m0, newMod4, refit=FALSE)
+```
+
+Still $p>0.2$.
+
+We proceed with an interim model including both random effects which had $p<0.2$:
+
+
+```{r}
+
+
+if0_m1 <- update(if0_m0, . ~ . - (1|speaker) + (1+Voicing.vl + base_vowel|speaker))
+```
+
+We can try adding to this a by-speaker random slope for the *interaction*, which would be the last possible term related to the RQs:
+
+```{r}
+
+
+newMod5 <- update(if0_m0, . ~ . - (1|speaker) + (1+Voicing.vl*base_vowel|speaker))
+```
+
+This model is singular, suggesting that the by-speaker random effects are overfitted. This makes sense, considering the  structure of the data: there are just ~50 observations per speaker,  6 possible `base_vowel`:`Voicing.vl` combinations, per speaker.
+
+We can instead try adding these slopes as uncorrelated random effects, which requires using the numeric versions of the contrasts of `base_vowel` (which are already columns of the dataframe):
+
+```{r}
+
+
+if0_m2 <- update(if0_m1, . ~ . - (1|speaker) + (0+Voicing.vl:base_vowel_AvIU +Voicing.vl:base_vowel_IvU ||speaker))
+anova(if0_m2, if0_m1, refit=FALSE)
+```
+
+```{r}
+
+
+summary(if0_m2, correlation=FALSE)
+```
+
+<!-- This model  is singular, due to a zero random slope estimate. We could remove this term, which will not affect the fitted model; we leave it in for simplicity. -->
+
+By the last model comparison ($p<0.2$), our new interim model is `if0_m2`.
+
+### Control predictors
+
+At this point, we have considered all possible random effect terms related to the RQs.  There are 8 more random slopes we could consider:
+
+* `gender`: by-word, by-consonant
+* `utterance_num_sylls`: by-speaker, by-word, by-cons
+* `local_f0`: by-speaker, by-word, by-cons
+
+We assess each one by adding to the model as an uncorrelated random effect, and using model comparison.  The logic of trying uncorrelated rather than correlated random effects is that random slopes should be prioritized over correlations, and if an uncorrelated slope improves the model ($p<0.2$ for LR test comparing REML fits), we can then try the correlated version.
+
+**By-consonant random slopes**
+
+To check whether a (uncorrelated) by-consonant random slope of speaker gender improves the model:
+
+```{r}
+
+newMod7 <- update(if0_m2, . ~ . + (0+gender.male||consonant))
+anova(if0_m2, newMod7, refit=FALSE)
+```
+
+$p>0.2$, so we don't add this term.
+
+Other possible by-consonant random effects (uncorrelated):
+
+```{r}
+newMod8 <- update(if0_m2, . ~ . + (0+utterance_num_syllables||consonant))
+anova(if0_m2, newMod8, refit=FALSE)
+```
+
+```{r}
+newMod9 <- update(if0_m2, . ~ . + (0+utterance_num_syllables||consonant))
+anova(if0_m2, newMod9, refit=FALSE)
+```
+
+$p>0.2$ for all model comparisons, so none of these slopes are added to the model.
+
+**By-speaker random slopes**
+
+```{r}
+newMod10 <- update(if0_m2, . ~ . + (0+utterance_num_syllables||speaker))
+anova(if0_m2, newMod10, refit=FALSE)
+```
+
+
+```{r}
+newMod11 <- update(if0_m2, . ~ . + (0+local_f0||speaker))
+anova(if0_m2, newMod11, refit=FALSE)
+```
+
+Both model comparisons have $p>0.2$, so neither of these slopes are added to the model.
+
+**By-word random slopes**
+
+```{r}
+newMod12 <- update(if0_m2, . ~ . + (0+utterance_num_syllables||word))
+anova(if0_m2, newMod12, refit=FALSE)
+```
+
+
+```{r}
+newMod13 <- update(if0_m2, . ~ . + (0+local_f0||word))
+anova(if0_m2, newMod13, refit=FALSE)
+```
+
+
+```{r}
+newMod14 <- update(if0_m2, . ~ . + (0+gender.male||word))
+```
+
+This model does not converge with default settings, but does converge by changing the start values:
+
+```{r}
+newMod14 <- update(newMod14, start=getME(newMod14,"theta"))
+```
+
+Model comparison using this convergent model:
+
+```{r}
+anova(if0_m2, newMod14, refit=FALSE)
+```
+
+The by-word random slope of `utterance_num_syllables` has $p<0.2$, so we will add it to the model. First we check if it can be added with correlations:
+
+```{r}
+newMod12_corr <- update(if0_m2, . ~ . - (1|word) + (1+utterance_num_syllables|word))
+```
+
+This model does not converge. Changing the start values doesn't help:
+
+```{r}
+newMod12_corr <- update(newMod12_corr, start=getME(newMod12_corr,"theta"))
+```
+
+Technically we should try further non-invasive solutions here, but it is reasonable to guess that the by-word random effects are overfitted, and stop trying. There are only about 3.5 observations per level of `word` on average (4224 obs/1238 words).
+
+Our final model is thus:
+
+```{r}
+if0_m3 <- newMod12
+summary(if0_m3, correlation=FALSE)
+```
+
+Note that the final model here is almost identical to the model before considering all random slopes for control predictors (`if0_m2`) (except for the additional random slope).  We would have reached the same outcome w.r.t. our research questions if we had simply stopped after considering random slope for critical predictors.  In a more realistic corpus dataset, with more control predictors (10-15, instead of 3), this option is worth considering.
+
+<!-- If we did, the process could be simplified a bit by thinking about the structure of the data. As corpus data, the data is highly imbalanced by word: there are on average about 3.5 observations per word, but a majority of words will have just 1--2 observations. It is thus unreasonable to estimate any by-word random slopes. (If you try anyway, there will be convergence problems.) -->
+
+## Case study 3: uncorrelated first
+
+```{r}
+vot_voiced$speaking_rate_mean_std <- rescale(vot_voiced$speaking_rate_mean)
+mm <- model.matrix(~place, vot_voiced) 
+vot_voiced$place1 <- mm[,2] ## contrast 1
+vot_voiced$place2 <- mm[,3] ## contrast 2
+```
+
+Baseline model:
+
+```{r}
+vot_voiced_m0 <- lmer(log_vot ~ speaking_rate_dev +  foll_high_vowel + cons_cluster + stress + log_corpus_freq + place + gender + speaking_rate_mean_std +(1|word) + (1|speaker),  data=vot_voiced)
+```
+
+Model with all possible random slopes, uncorrelated:
+
+```{r}
+vot_voiced_m1 <- update(vot_voiced_m0, . ~ . -(1|speaker) - (1|word) +(1+gender + speaking_rate_mean_std+speaking_rate_dev||word) + 
+  (1+speaking_rate_dev + foll_high_vowel + cons_cluster + stress + log_corpus_freq + place1 + place2||speaker),  data=vot_voiced)
+```
+
+Try adding speaking rate predictor correlation terms:
+
+```{r}
+vot_voiced_m2 <- update(vot_voiced_m0,  . ~ . -(1|speaker) - (1|word) +
+         (1+speaking_rate_mean_std + speaking_rate_dev|word) +
+         (0+gender||word) +
+         (1+speaking_rate_dev|speaker)  + 
+         (0+foll_high_vowel + cons_cluster + stress + log_corpus_freq + place1 + place2||speaker)
+)
+```
+
+Random effects look fine:
+```{r}
+summary(vot_voiced_m2)$varcor
+```
+
+These terms improve the model (using $\alpha=0.2$):
+
+```{r}
+anova(vot_voiced_m1, vot_voiced_m2, refit=FALSE)
+```
+
+Intrinsically-related predictors:
+
+```{r}
+vot_voiced_m3 <- update(vot_voiced_m0,  . ~ . -(1|speaker) - (1|word) +
+         (1+speaking_rate_mean_std + speaking_rate_dev|word) +
+         (0+gender||word) +
+         (1+speaking_rate_dev+place1+place2|speaker)  + 
+         (0+foll_high_vowel + cons_cluster + stress + log_corpus_freq ||speaker)
+)
+```
+
+Doesn't converge. Try with a different optimizer:
+
+```{r}
+vot_voiced_m3 <- update(vot_voiced_m3, control=lmerControl(optimizer = 'bobyqa'))
+```
+
+Random effect structure looks fine:
+
+```{r}
+summary(vot_voiced_m3)$varcor
+```
+
+Improves model ($p<0.2$):
+
+```{r}
+anova(vot_voiced_m2, vot_voiced_m3, refit=FALSE)
+```
+
+We could stop now, confident that the random effect structure is sufficient for good estimates of our terms of interest (fixed effects of `speaking_rate_dev`, `speaking_rate_mean`, `place`).  The final model would be:
+
+```{r}
+summary(vot_voiced_m3, correlation=FALSE)
+```
+
+We could alternatively continue by examining pairwise plots of the estimated random effects, to see what further correlation terms could be tried:
+
+```{r}
+pairscor.fnc(ranef(vot_voiced_m3)$speaker)
+pairscor.fnc(ranef(vot_voiced_m3)$word)
+```
+
+By-speaker random slopes for frequency, cons_cluster have the highest correlations with other terms ($r=0.4$--0.6).  In each case, the highest correlations are with terms in the block with correlations (intercept, `speaking_rate_dev`, `place`), so we must add the slope to this block.
+
+Model with correlations for by-speaker frequency slope:
+
+```{r}
+vot_voiced_m4 <- update(vot_voiced_m0,  . ~ . -(1|speaker) - (1|word) +
+         (1+speaking_rate_mean_std + speaking_rate_dev|word) +
+         (0+gender||word) +
+         (1+speaking_rate_dev+place1+place2+log_corpus_freq|speaker)  + (0+foll_high_vowel + cons_cluster + stress||speaker), control=lmerControl(optimizer = 'bobyqa'))
+```
+
+This model is singular, due to overparametrized by-speaker random effects: in the random effects PCA, one component accounts for no variance:
+
+```{r}
+rePCA(vot_voiced_m4)$speaker
+```
+
+We conclude that these correlation terms can't be added to the model (too little data).
+
+Model with correlations for by-speaker `cons_cluster` slope:
+
+```{r}
+vot_voiced_m5 <- update(vot_voiced_m0,  . ~ . -(1|speaker) - (1|word) +
+         (1+speaking_rate_mean_std + speaking_rate_dev|word) +
+         (0+gender||word) +
+         (1+speaking_rate_dev+place1+place2+cons_cluster|speaker)  + (0+foll_high_vowel + log_corpus_freq + stress||speaker), control=lmerControl(optimizer = 'bobyqa'))
+```
+
+This model is again singular, due to overparametrized by-speaker random effects, as we see in the random effects PCA:
+
+```{r}
+rePCA(vot_voiced_m5)$speaker
+```
+
+<!-- Random effects look OK, and the extra correlation terms improve the model ($p<0.2$): -->
+
+<!-- ```{r} -->
+<!-- summary(vot_voiced_m5)$varcor -->
+<!-- anova(vot_voiced_m5, vot_voiced_m3, refit=FALSE) -->
+<!-- ``` -->
+
+Our final model is thus `vot_voiced_m3`.
+<!-- This is thus our final model: -->
+
+<!-- ```{r} -->
+<!-- summary(vot_voiced_m5, correlation=FALSE) -->
+<!-- ``` -->
+
+Note how similar the results for fixed and random-effect terms (except correlations, of course) are for the two models which we could have stopped at:
+
+* `vot_voiced_m1`: uncorrelated random effects
+* `vot_voiced_m3`: + motivated correlation terms 
+
+<!-- * `vot_voiced_m5`: + more correlation terms -->
+
+
+# Cleaning up
+
+Save all objects:
+
+```{r, cache=FALSE}
+save.image(file="objects/convergence_appendix_mods.RData")
+```
+
+# Session info
+
+```{r}
+print(sessionInfo(), locale=FALSE)
+```
+
+
+

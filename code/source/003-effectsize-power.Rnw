@@ -1,0 +1,2194 @@
+% !Rnw root = master.Rnw
+
+<<cache=FALSE, echo=FALSE>>=
+## use num signif digits (which is what
+## tidy print does by default) instead of decimal
+options(knitr.digits.signif = TRUE)
+options(digits = 2)
+@
+
+\hypertarget{es-power}{%
+\chapter[Statistical inference II: Effect size, power, and error]{Effect size, power, and error}\label{chap:es-power}}
+
+%As introduced in the last chapter, 
+Our goal in analyzing data is to assess evidence for effects of interest.
+%more formally, ``to draw conclusions about which parameter values are supported by the data and which are not'' \citep[][4]{hoenig2001abuse}. 
+In the last chapter we introduced the most common metric used for this purpose: the $p$-value/significance. In practice, in many fields (including linguistics)
+researchers interpret results primarily based on significance.  However, a $p$-value only gives limited information about a result. Two other numbers are arguably just as important, and do not follow from a $p$-value:  \emph{power} of the statistical analysis used to find an effect of a given size, and the \emph{effect size} (its magnitude and direction)
+%and the \emph{power} of the statistical analysis used to find an effect of a given size 
+(Section~\ref{sec:effect-size}--\ref{sec:type-i-ii-power}).
+
+These three things ($p$, power, effect size) correspond to different, but related kinds of errors:
+%which are intimately related: 
+finding an effect exists when one doesn't, or failing to find an effect when one exists (Types I and II error: Section~\ref{sec:type-i-ii-power}), and estimating the wrong magnitude or sign of the effect size (Type M and Type S errors: Section~\ref{sec:type-m-s-error}). 
+%This chapter shows several ways We 
+Understanding these different kinds of errors is  broadly useful for data analysis.
+% as we show through examples.
+% interpreting completed studies (e.g.,\ null results; Section~\ref{sec:interp-null-results}), analyzing new data
+% %useful for all aspects of data analysis:
+% %The goals of this chapter are to introduce these concepts, and show how the different kinds of errors are together very useful for data analysis: analysis new data 
+% (e.g.,\ multiple comparisons: Section~\ref{sec:multiple-comparisons}), or
+% when assessing different possible analysis methods (Section~\ref{sec:assumptions-hyp-tests}).
+% %key to interpreting statistical analyses: 
+% %The goals of this chapter are to introduce these concepts and why they are and how they are useful  and why they are useful for  
+% %their relevance for  they can  errors are intimately related, and understanding how to think about them is very useful in
+
+
+%% FUTURE: rewrite intro? not great, given actual contents of chapter
+
+%and conceptual understanding ()  the results of completed studies (especially null results: especilaly---especially non-significant results  null results \citep{sec:design-analysis}.
+
+
+% * In practice this number plays a huge role in how the average researcher thinks about a result. But two other numbers are just as important, and not the same: and the *size* of the effect  (its magnitude and direction), and the *power* of the statistical analysis used to find an effect of a given size, introduced in Sec 1-2. 
+% * These three things correspond to different kinds of errors, which are key for interpreting results of any statistical analysis: making an incorrect binary decision about “significance” of a result (Type I/II errors, also in Sec 2), and estimating the wrong magnitude or sign of the effect size (Sec 3).  They are also intimately related, and understanding how to think about them is extremely useful for interpreting results — especially null results.
+
+% 
+% Researchers in phonetics frequently reach such conclusions based on significance: the probability, or p-value, of obtaining an effect of the observed size (or greater) if the true effect were zero.
+% 
+% Researchers in language sciences, as in many fields, 
+% When analyzing linguistic data, the goal of a statistical analysis is to 
+% 
+% It is common practice in the statistical analysis of phonetic data to draw conclu- sions on the basis of statistical significance. While p-values reflect the probability of incorrectly concluding a null effect is real, they do not provide information about other types of error that are also important for interpreting statistical results.
+
+\section{Preliminaries}
+\label{sec:chap-3-prelim}
+
+\subsection{Packages}
+
+We assume that you have loaded the same packages as for Chapter~\ref{chap:inference-1}, as well as the  {pwr} and {effsize} packages \citep{pwrPackage,effsizePackage}:
+%for power and effect size calculations:
+
+<<ch3_libraries, cache=TRUE, echo=1:4>>=
+library(languageR)
+library(tidyverse)
+library(pwr)
+library(effsize)
+
+library(broom)
+select <- dplyr::select
+@
+% 
+% 
+% ` and `languageR` libraries, which are discussed in \secref{sec:toolset}: same packages as in the last chapter (
+
+%) and datasets as in the last chapter (Section~\ref{sec:prelim-2}), including defining the \ttt{transitions\_sub} dataframe.  
+
+\subsection{Data}
+\label{sec:neutralization-data}
+
+\subsubsection*{The \ttt{neutralization} dataset}
+
+We also assume that you have loaded the \ttt{neutralization} dataset:
+<<ch3_datasets>>=
+neutralization <- read.csv("data/neutralization_rmld.csv")
+@
+
+% <<ch3_functions, echo=FALSE>>=
+% t_test_ci<- function(test, digits=1){
+%   paste('[',round(test$conf.int[1], digits = digits), ', ', round(test$conf.int[2], digits=digits), ']', sep='')
+% }
+% 
+% printWrapper <- function(x){x %>%  xtable() %>% print(only.contents=TRUE, include.rownames=FALSE, include.colnames=FALSE)}
+% @
+
+
+<<ch3_summ_numbers, echo=FALSE>>=
+neut_n <- nrow(neutralization)
+neut_n_7 <- nrow(filter(neutralization, subject == 7))
+neut_n_sub <- length(unique(neutralization$subject))
+neut_n_item <- length(unique(neutralization$item_pair))
+
+tt_all <- t.test(vowel_dur ~ voicing, data = neutralization)
+tt_7 <- t.test(vowel_dur ~ voicing, data = filter(neutralization, subject == 7))
+@
+
+This dataset, described in more detail by \citet{neutralization_data}, originally comes from a phonetic study by \citet{roettger2014assessing}  examining neutralization  of German stops (their Experiment 1).
+%of \citealp{roettger2014assessing}).
+%and is described in more detail by .  
+
+In German, words ending in underlying voiced and voiceless stops (reflected in the orthography)  are traditionally described as `neutralized' at the end of words---they are all pronounced with a voiceless stop.  One result is that many pairs of words sound the same in singular but not plural forms. For example:
+\begin{itemize}
+\item \textit{Rat} [\textipa{Ka:t}] `council',
+\textit{R\"ate} [\textipa{KE:t5}] `councils'
+\item \textit{Rad} [\textipa{Ka:t}] `wheel',
+\textit{R\"ader} [\textipa{KE:d5}] `wheels'
+\end{itemize}
+%% JPK notes: they didn't read these words, there were no orthographic prompts. (crucially)
+In the experiment, German speakers were asked to produce singular forms of nonsense words ending in stops (like \textit{Frup}, \textit{Frub}), where they had previously heard the plural forms (\textit{Frupe}, \textit{Frube}). There are \Sexpr{neut_n_item} such voiced/voiceless pairs (indexed by \ttt{item\_pair}). Of interest is whether (underlying) voiced and voiceless stops (column \ttt{voicing}: levels \tsc{voiced}, \tsc{voiceless}) are actually pronounced identically, assessed by measuring the preceding vowel's duration (column \ttt{vowel\_dur}).  Traditional phonological theories predict no difference (`complete neutralization'), while some previous phonetic studies suggest there might be a small but significant difference (`incomplete neutralization': IN), which may be explained as an artefact of the structure of the mental lexicon.  (\citealp{nicenboim2018using} review the literature on IN).
+%and the controversy.) 
+%see \footnote{More recent accounts to incomplete neutralization are rooted in psycholinguistic models of lexical organization, suggesting that incomplete neutralization is an artifact of lexical co- activation (Ernestus & Baayen, 2006; Kleber et al., 2010; Roettger et al., 2014; Winter & Roettger, 2011).}
+
+Incomplete neutralization is a good phenomenon to exemplify power and effect size (including errors) because:\footnote{Several existing articles use German IN to discuss the concepts covered in this chapter, using this dataset among others from psycholinguistics and phonetics \citep{kirby2018mixed,kirby2018model,nicenboim2018using,vasishth2018statistical,vasishth2016statistical}. 
+%These sources as well as \citet{vasishth2018statistical,vasishth2016statistical} cover most of the points made in this chapter about power and effect size errors, using examples from psycholinguistics and phonetics. 
+Our presentation is indebted to these sources (especially \citealp{kirby2018mixed,kirby2018model}), but tries to be more accessible.}
+\begin{itemize}
+\item Whether IN exists at all (i.e.,\ whether the null is true) is controversial, with both existence and non-existence corresponding to reasonable theoretical positions.
+% commented out, because the same point is made later in 
+%\footnote{More commonly, we are pretty sure when performing a study that the null is false---this is why we are trying to assess whether we have enough evidence to reject it \citep{hallahan1996statistical}.}  Thus, it is not clear a priori whether the null is true or not. 
+
+\item There is a substantial literature on IN (especially for German), with some supporting the existence of IN and some null results. Interpreting these studies requires thinking about both Type I and Type II error (and thus power).
+\item It is scientifically important what the exact effect size is, beyond just ``zero or not''. The size tells us whether the effect is meaningful, and differentiates between different theories.
+%(see Section~\ref{sec:effect-size-1}).  
+Type M and S errors are thus of interest.
+\end{itemize}
+
+%(e.g.,\ using $t$-tests instead of more complex regression models).
+
+
+%All the points made here about power and effect size errors are discussed in depth using examples from psycholinguistics and phonetics (including the German incomplete neutralization case) by \citet{vasishth2017statistical,vasishth2016statistical,nicenboim2018using}. 
+% and error considerations
+%   
+% Good dataset to consider for this chapter, because:
+% 
+% - Previous work on IN, including German specifically, gives `mixed' results \citep[see][for review]{nicenboim2018using}.  A priori, it's not clear whether the null is true or not---so both null and non-null results of interest; interpreting data requires thinking aobut both Type I and Type II error.
+% 
+% - It is scientifically important what the exact effect size is (tells us whether effect is meaningful, differentiates between theories)---beyond just "zero or not".
+%  
+
+\section{Effect size}
+\label{sec:effect-size}
+
+\subsection{Introduction}
+\label{sec:effect-size-1}
+
+%% added, following Jessamyn comment
+Effect size is a measure of the direction and magnitude of an effect. There are multiple ways to quantify effect size, ranging from a raw difference in means to standardized scores like Cohen’s $d$. We first introduce some examples to give a conceptual overview, then discuss metrics commonly used to quantify effect size.
+
+\paragraph{Examples}
+
+Consider the top-left panel of Figure~\ref{fig:neutralization-1}, just as showing the difference in how $x$ is distributed in two samples. Think of a measure of `how different are the two groups', just based on visual inspection of the graph---like how far apart the modes are, or how far apart they are relative to the width of the distributions. Suppose we now tell you the figure is based on $n=5$ points rather than $n= \Sexpr{neut_n}$ (the reality). Your measure hasn't changed (it's just based on the figure), but the $p$-value will: with 5 observations, nothing is significant.
+
+
+\begin{figure}
+<<echo=FALSE, out.width="45%", fig.asp=.65, fig.width=default_fig.width*.45/default_out.width>>=
+
+## function to add mean info needed for vertical lines
+add_mean <- function(x, var1, var2) {
+  v1 <- enquo(var1)
+  v2 <- enquo(var2)
+  x %>%
+    group_by(!!v1) %>%
+    summarise(mean = mean(!!v2)) %>%
+    left_join(x)
+}
+
+## NB: excludes 1 obs with NA
+filter(neutralization, !is.na(prosodic_boundary)) %>%
+  add_mean(prosodic_boundary, vowel_dur) %>%
+  ggplot(aes(x = vowel_dur)) +
+  geom_density(aes(fill = prosodic_boundary, color = prosodic_boundary), alpha = 0.5) +
+  geom_vline(aes(xintercept = mean), lty = 2) +
+  xlim(50, 310) + 
+  geom_label(aes(label = label, y=density), data = data.frame(vowel_dur = 250, density=0.009, label = "d = 0.62,\np < 0.001")) + 
+  xlab("Vowel duration (msec)") +
+  ggtitle("Prosodic boundary: all data") +
+  theme(legend.position = "none",
+        plot.title.position = "plot") + 
+  ylim(0,.012) + scale_y_continuous(breaks = seq(0, .12, .006)) + 
+  scale_fill_grey() + scale_color_grey()
+
+## NB: excludes 11 obs with 'deaccented', for simplicity of the plot
+filter(neutralization, accent_type != "deaccented") %>%
+  add_mean(accent_type, vowel_dur) %>%
+  ggplot(aes(x = vowel_dur)) +
+  geom_density(aes(fill = accent_type, color = accent_type), alpha = 0.5) +
+  geom_vline(aes(xintercept = mean), lty = 2) +
+  geom_label(aes(label = label, y=density), data = data.frame(vowel_dur = 250, density=0.009, label = "d = 0.61,\np < 0.001")) + 
+  xlim(50, 310) +
+  xlab("Vowel duration (msec)") +
+  ggtitle("Accent type: all data") +
+  theme(legend.position = "none",
+        plot.title.position = "plot") + 
+  ylim(0,.012) + scale_y_continuous(breaks = seq(0, .12, .006)) + 
+  scale_fill_grey() + scale_color_grey()
+
+neutralization %>%
+  add_mean(voicing, vowel_dur) %>%
+  ggplot(aes(x = vowel_dur)) +
+  geom_density(aes(fill = voicing, color = voicing), alpha = 0.5) +
+  geom_vline(aes(xintercept = mean), lty = 2) +
+  xlab("Vowel duration (msec)") +
+  ggtitle("Voicing: all data") +
+    theme(legend.position = "none",
+        plot.title.position = "plot") + 
+  ylim(0,.012) + scale_y_continuous(breaks = seq(0, .12, .006)) +
+  xlim(50, 310) + 
+    geom_label(aes(label = label, y=density), data = data.frame(vowel_dur = 250, density=0.009, label = "d = 0.21,\np = 0.0042")) + ylim(0,.012) + scale_y_continuous(breaks = seq(0, .12, .006)) + 
+  scale_fill_grey() + scale_color_grey()
+
+filter(neutralization, subject == 7) %>%
+  add_mean(voicing, vowel_dur) %>%
+  ggplot(aes(x = vowel_dur)) +
+      geom_label(aes(label = label, y=density), data = data.frame(vowel_dur = 240, density=0.0105, label = "d = 0.23,\np = 0.42")) +
+  geom_density(aes(fill = voicing, color = voicing), alpha = 0.5) +
+  geom_vline(aes(xintercept = mean), lty = 2) +
+  xlab("Vowel duration (msec)") +
+  xlim(50, 310) + 
+  ggtitle("Voicing: one speaker") +
+  theme(legend.position = "none",
+        plot.title.position = "plot") + 
+  ylim(0,.012) + scale_y_continuous(breaks = seq(0, .12, .006)) + 
+  scale_fill_grey() + scale_color_grey()
+@
+\caption{Empirical distribution of vowel duration in the \ttt{neutralization} data as a function of two prosodic variables (darker/lighter = no/yes \ttt{prosodic\_boundary}, nuclear/prenuclear \ttt{accent\_type}), and   following consonant voicing (bottom row: darker/lighter = \tsc{voiceless}/\tsc{voiced}). Bottom-right plot is for a single subject ($n =$  \Sexpr{neut_n_7}), other plots are across all subjects ($n \approx $ \Sexpr{neut_n}).
+%and right plot is for a single subject , 
+%for the \texttt{neutralization} data.  
+Vertical lines indicate sample means, and boxes show effect size (Cohen's $d$) and significance ($p$ for a two-sample $t$-test) of the green/red difference.}
+\label{fig:neutralization-1}
+\end{figure}
+
+
+Now suppose we 
+%tell you that we 
+were interested in whether people in Montreal speak faster than those from Toronto, so we measured speaking rate for $n$ speakers from the two cities, and found that they differ by 0.01 syllables per second on average. This is clearly an extremely small effect. This judgement shouldn't change whether $n = 5$ or 1000000, but the $p$-value will: with a million observations, anything is significant ($p<0.001$).
+%an extremely small effect will have a very small $p$-value.
+%is significant.
+
+Finally, consider the bottom-left and bottom-right plots in Figure~\ref{fig:neutralization-1}, which plot the same thing (distribution of \ttt{vowel\_dur} as a function of \ttt{voicing}) for $n = \Sexpr{neut_n}$ and $n = \Sexpr{neut_n_7}$ observations from the \ttt{neutralization} dataset.\footnote{Note that what's important here is that the samples differ in the number of observations, not that they differ in the number of subjects the observations are from.}
+%The example would work equally well with a random sample of \Sexpr{neut_n_7} observations, from all subjects.} 
+%% added footnote following Jessamyn comment
+Intuitively, the plots show a similar pattern in terms of effect size---the groups mostly overlap, with vowel duration maybe a bit larger for \tsc{voiced} stops; in each case the group means are 7--8 msec apart. But a two-sample $t$-test gives a much lower $p$-value/narrower confidence interval for the bottom-left plot (\Sexpr{formatP(tt_all$p.value)}) than for the bottom-right plot ($p = \Sexpr{tt_7$p.value}$), due to sample size:
+
+%---as you can see by carrying out these tests:
+<<output.lines=5:8>>=
+t.test(vowel_dur ~ voicing, data = neutralization)
+@
+<<output.lines=5:8>>=
+neut_7 <- filter(neutralization, subject==7)
+t.test(vowel_dur ~ voicing, data = filter(neutralization, subject == 7))
+@
+
+%\paragraph{Definition}
+
+These examples demonstrate intuitively that an effect's size---which is independent of the sample size---is not the same as an effect's significance. 
+Informally, an \emph{effect size} is any quantitative measure of the size of something we are interested in (an \emph{effect}) \citep[][34]{cumming2012understanding}.\footnote{\citet{kelley2012effect} give a more nuanced definition, which makes clear that an effect size measure is always tied to the question(s) it is being used to address: ``Effect size is defined as a quantitative reflection of the magnitude of some phenomenon that is used for the purpose of addressing a question of interest.''}  The measure must be independent of sample size (so it purely describes the observed effect), and appropriate for the research question(s) being addressed,
+%(examples below), 
+but otherwise the definition is intentionally broad.  
+
+More formally: in almost any NHST hypothesis test, the test statistic can be expressed as:
+$$
+\text{test statistic} = ES \cdot f(N),
+$$
+where $ES$ is an effect size measure and $f(N)$ is a function of sample size \citep[][76]{kline2013beyond}. For example, for a two-sample $t$-test in the simplest case (equal variances and sample sizes: equation~\ref{eq:hyptest2}), the test statistic is: 
+$$
+t = \underbrace{\frac{\mu_1 - \mu_2}{s}}_{ES} \underbrace{\sqrt{\frac{n}{2}}}_{f(N)}
+$$
+Since $p$ follows directly from the test statistic, it follows that for any hypothesis test the $p$-value confounds effect size and sample size. Large effects may not be significant in small samples, and tiny effects will be significant in large samples.  For this reason, it is ideal to \textbf{report a corresponding effect size whenever a $p$-value is reported}---as recommended in the APA Manual (and our guidelines in Section~\ref{sec:reporting-hypothesis-tests}).
+
+
+% \begin{itemize}
+% \item \textbf{Independence of sample size}: so that the measure is purely a description of the observed effect
+% \item \textbf{Appropriateness for the research question}: the effect is of interest to address (a) research question(s), and the effect size must be defined to give insight into that question.
+% \end{itemize}
+%
+
+In this book we usually use `effect size' to mean a quantity calculated from the sample, and we use `true effect size' to refer to the population value of the quantity, if needed.  We first introduce effect size as a descriptive quantity,
+%(this section),
+then later  discuss it as an estimated quantity (Section~\ref{sec:type-m-s-error}).  
+
+
+
+
+% 
+% Try sketching this out to see if makes sense:
+% 
+% - Before discussing estimates, important to think about what we are estimating: an *effect*---a "quantitative reflection of a phenomenon and size as the magnitude
+% of something" (Kelley \& Preacher 2012).  Of central interest is its *size*, defined somehow.
+% 
+% - Cummings 2012 (34): "An effect is anything we might be interested in, and an effect size is simply the size of anything that may be of interest."
+% 
+% Kelley \& Preacher 2012, more precise: "Effect size is defined as a quantitative reflection of the magnitude of some phenomenon that is used for the purpose of
+% addressing a question of interest."
+
+% - Two effect size principles from K\&P: Its scale (metric) should be appropriate for the research ques- tion. Specific metrics for effect sizes are considered below.
+% 2. It should be independent of sample size. (recall that test statis- tics reflect both sample size and effect size) 
+% (and let's omit two others, good statistical properties and should be reported with CIs)
+
+\subsection{Standardized versus\ unstandardized}
+\label{sec:effect-size-types}
+
+There are two broad types of effect sizes.  Measures  like differences in means, or (unscaled) regression coefficients, are called \emph{unstandardized}---they are on the scale used in the study, and may allow for direct comparison with other concrete, interpretable metrics.
+%can be directly interpreted compared to a practical metric.  
+%For example, in the incomplete neutralization study, the vowel duration difference could be interpreted relative to the smallest duration difference humans can perceive,
+%(around 5--25 msec: \citealp{nooteboom1980production,klatt1976linguistic}),
+%or relative to other duration differences observed in the study, such as those shown in Figure~\ref{fig:neutralization-1}.
+%(Unstandardized regression coefficients are another example.)   
+Unstandardized effect sizes have the primary advantage of interpretability, and so are better used for
+%Better used when
+outcomes measured on a meaningful metric (such as vowel duration, in msec),
+%, for the incomplete neutralization ), 
+or comparing studies measured on the same metric.
+%(such as different studies of incomplete neutralization in the same language).
+For example, in the incomplete neutralization study, the vowel duration difference could be interpreted relative to the smallest duration difference humans can perceive, or relative to other duration differences observed in the study.
+
+Measures where effect size is normalized in a way which abstracts away from the scale of measurement are called \emph{standardized}. This includes all measures of association/variance explained (such as correlation coefficients, $R^2$, or $\eta^2$ for ANOVAs), and standardized differences of means, such as standardized regression coefficients or \emph{Cohen's $d$}: the difference in group means divided
+by a standard deviation which (intuitively) reflects the `amount of variability' in the data, given the study's design \citep{cohen1988statistical}.
+%(which intuitively reflects the `amount of variability' in the data).
+Standardized effect size measures are useful when
+%with the fact that
+measurement units are 
+%often
+not intrinsically meaningful (e.g.,\ rating scales, acceptability judgments) or easily interpretable (e.g.,\ log-transformed reaction times, word frequencies). %They also take into account variability in the data, which often matters for practical interpretation---for Cohen's $d$, how large is the between-group difference \textbf{relative} to within-group differences---and means they can be thought of as a signal-to-noise ratio (Winter 9.2): the effect is larger if there is a stronger signal (large $\mu_1 - \mu_2$) or less noise (small $s$). 
+They  have the advantage of comparability across different metrics, which makes them better suited for comparing results which are conceptually similar but may be on different scales---for example, studies evaluating incomplete neutralization in different languages, or different types of sounds (where observations would be of a different phonetic parameter from vowel duration).
+%be measured).
+% different kinds of sounds speaker gender affects various aspects of speech (like transition time, as in XX, but also speaking rate or YY), or studies of incomplete neutralization in different languages.  Other standardized effect-size measures are correlation coefficients ($R^2$) or standardized regression coefficients. 
+
+%\paragraph{Example}
+
+\paragraph{Example}
+%\label{sec:cohens-d-example}
+
+
+<<echo=FALSE>>=
+ex1 <- cohen.d(vowel_dur ~ voicing, data = neutralization)
+summ_df <- neutralization %>%
+  group_by(voicing) %>%
+  summarise(m = mean(vowel_dur)) %>%
+  remove_rownames() %>%
+  column_to_rownames("voicing")
+## Unstandardized difference in means
+diff_means <- summ_df["voiced", "m"] - summ_df["voiceless", "m"]
+@
+
+Consider the effects of following consonant voicing on vowel duration 
+%(\ttt{voicing}) 
+for the \ttt{neutralization} data (Figure~\ref{fig:neutralization-1}: bottom-left)---which corresponds to the research question for the experiment. Two measures of effect size we could compute are the difference in means $\Delta \mu$, and Cohen's $d$---this difference scaled by within-group variance. $\Delta \mu$ is an unstandardized measure and  $d$ is standardized.  The following code computes these measures, giving $\Delta \mu =  \Sexpr{diff_means}$ msec and $d = \Sexpr{ex1$estimate}$.
+
+<<>>=
+mean(filter(neutralization, voicing == "voiced")$vowel_dur) -
+  mean(filter(neutralization, voicing == "voiceless")$vowel_dur)
+cohen.d(vowel_dur ~ voicing, data = neutralization)$estimate
+@
+Here we used the \ttt{cohen.d()} function from the effsize package, which automatically calculates the correct `amount of variability' for the denominator of $d$.
+
+These effect size measures are for the plot using the whole dataset 
+%the bottom-left plot in 
+(Figure~\ref{fig:neutralization-1}: bottom-left).
+%which uses the whole dataset. 
+We can compute the same measures computed just for subject 7 (bottom-right plot) using similar code:
+
+<<>>=
+mean(filter(neut_7, voicing == "voiced")$vowel_dur) -
+  mean(filter(neut_7, voicing == "voiceless")$vowel_dur)
+
+cohen.d(vowel_dur ~ voicing, data = neut_7)$estimate
+@
+
+% We can compute the same measures computed just for subject 7 (bottom-right plot) using similar code, giving $\Delta \mu =  \Sexpr{diff_means_1}$ msec and 
+% $d = \Sexpr{ex1_1$estimate}$.  
+
+% FUTURE: good point from Jessamyn. This used to just say "the effect size is similar..", but it's not clear that 6.9 and 9 are similar unless you know about vowel duration. Another way to contextualize would be to calculate effect sizes for one of the "large" effects (prosodic boundary) in that figure.
+Thus, the standardized effect size ($d$) is similar for the two plots, confirming our intuition from visual inspection above.
+
+
+
+
+
+%\footnote{Although the definition of $d$ seems simple ($\Delta \mu / \sigma$), the formula for the correct denominator ($\sigma) depends on the study's design}
+% 
+% 
+% <<>>=
+% library(effsize)
+% cohen.d(vowel_dur ~ voicing, data=neutralization)
+% @
+% The right standard deviation will be automatically calculated using functions such as 
+% 
+% which calculates $d = \Sexpr{ex1$estimate}$.
+
+
+%is usually the case for different studies of the same phenomenon (e.g.,\ incomplete neutralization studies in different labs, or different languages).
+
+
+% deal with the fact that measurement unti is often not intrinsically meaningful -- like a rating scale, XX. have the advantage of comparability across very different outcome metrics/studies, and also take into account  *variability in the data*, which matters for practical interpretation---how big is the between-group difference compared to within group.  (all Kline Ch.\ 5).  So they are better for  "comparing conceptually similar results based on different units of measure" (126) -- for example, how speaker gender affects some different phonetic measure (like speaking rate).
+
+
+% Measures like 2 are called \emph{standardized effect sizes}: normalize effect size in a way which abstracts away from the scale of measurement.  For example, could compute \emph{Cohen's $d$}: difference between group means divided by a standard deviation appropriate for the data given the experimental design (Cohen, 1988) (which intuitively reflects the `amount of variability' in the data). In our example, this is just difference in means by pooled within-group variance:
+% $$
+% d = \frac{\hat{\mu_1} - \hat{\mu_2}}{s}
+% $$
+% (using notation from later in chapter)
+% 
+% For our example, this value is X.   Other standardized effect-size measures are correlation coefficients ($r^2$) or standardized regression coefficients. 
+
+% Unstandardized effect sizes have primary advantage of interpretability, and so are better used for
+% %Better used when
+% outcomes measured on a meaningful metric, or comparing studies measured on same (meaningful) metric.  Standardized effect sizes deal with the fact that measurement unti is often not intrinsically meaningful -- like a rating scale, XX. have the advantage of comparability across very different outcome metrics/studies, and also take into account  *variability in the data*, which matters for practical interpretation---how big is the between-group difference compared to within group.  (all Kline Ch.\ 5).  So they are better for  "comparing conceptually similar results based on different units of measure" (126) -- for example, how speaker gender affects some different phonetic measure (like speaking rate).
+
+% - Measures like Cohen's $d$ can be thought of as signal-to-noise ratios (Winter 9.2): "ou are able to measure a strong effect either if the signal is very strong (large difference) or if the ‘noise’ is very weak (small standard deviation)." Could have figure showing the intuition, varying mean + SD for simulated data.
+% 
+% Important to note that effect-size measures do not make reference to sample size (K\&P 2012)---as opposed to test statistics used in hypothesis tests.
+% 
+% ---
+
+\subsection{Interpreting effect size}
+\label{sec:interpreting-es}
+
+Calculating an effect's size is usually straightforward, whether by hand or using functions from R packages (such as effsize).  The number by itself says nothing about the research question, for which the researcher must determine the effect's \emph{substantive significance}  (a.k.a.\ its meaningfulness, importance, theoretical/practical value)---which is more qualitative. For example, clearly $d = 5$ is a large effect and $d=0.01$ is a very small effect, but how should one assess a finding of $d = 0.5$?
+
+\subsubsection{Rules of thumb}
+\label{sec:effsize-rules-of-thumb}
+% I got these refs from Kline book:
+For standardized measures, the easy option is to use a pre-existing rule of thumb for a particular effect size measure.  Rules of thumb originating with \citet{cohen1969statistical} (summarized in \citealp[][]{cohen1992power} Table 1) are commonly used to interpret effect size measures based on their magnitudes---most often, Cohen's $d$ and the correlation coefficient $r$:
+% in behavioral/social sciences
+\begin{center}
+\begin{tabular}{lllll}
+\toprule
+& \multicolumn{4}{c}{Effect size} \\
+& \textbf{negligible} & \textbf{small} & \textbf{medium} & \textbf{large} \\
+\midrule
+$|d|$ & $<0.2$ & 0.2--0.5 & 0.5--0.8 & $>$0.8 \\
+$|r|$ & $<0.1$ & 0.1--0.3 & 0.30--0.5 & $>$0.5 \\
+\bottomrule
+\end{tabular}
+\end{center}
+For example, for the \ttt{neutralization} example just above
+%the incomplete neutralization example above,
+the effect would be `small', bordering on `negligible' ($d = \Sexpr{ex1$estimate}$).
+%So an effect with Cohen's $d = 0.35$ would be `small', and one with correlation $r = -0.8$ would be `large'.
+% 
+% \begin{itemize}
+% \item $|d|<0.2$, $0.2 < |d|<0.5$, $0.5 < |d| < 0.8$, $|d|>0.8$ : negligible, small, medium, large effect
+% \item $|r|<0.1$, $0.1 < |r| < 0.3$, $0.3 < |r| < 0.5$, $|d|>0.5$ : negligible, small, medium, large effect
+% \end{itemize}
+
+Despite being widely used, these cutoffs are arbitrary---Cohen intended them as educated guesses, to be used when previous work in an area wasn't available to estimate what small/medium/large meant.  Although tutorials on effect size strongly recommend against such cutoffs
+%`t-shirt' effect sizes 
+(e.g.,\ \citealp{cohen1992power}; \citealp[][chap.~5]{kline2013beyond}; \citealp{cumming2014new}), they can be useful when effect sizes from previous work aren't available, 
+%available or hasn't discussed effect sizes,
+%this case, 
+which (anecdotally) seems to be common for linguistic studies.
+% in many subfields of linguistics (e.g.,\ ) applies for linguistic phenomena (little--) you have no other options---such as when effect sizes in work on a phenomenon have not been previously discussed, so there is little sense of what should count as small/etc.  This will often be the case for some kinds of linguistic data.
+
+<<echo=FALSE>>=
+d_pb <- cohen.d(vowel_dur ~ prosodic_boundary, neutralization)$estimate
+d_acc <- cohen.d(vowel_dur ~ accent_type, data = droplevels(filter(neutralization, accent_type != "deaccented")))$estimate
+d_gender <- cohen.d(vowel_dur ~ gender, neutralization)$estimate
+@
+
+\subsubsection{In context}
+\label{sec:in-context}
+Whenever possible the harder option is preferred: determining substantive significance based on ``the particular area, research design, population of interest, and research goal'' \citep{kelley2012effect}.  In other words, what should count as a large/important effect for the particular study questions/goals, based on previous work or theoretical considerations?  
+
+For the case of incomplete neutralization, one option is to assess the effect as `negligible' if humans can just perceive it (the \emph{just-noticeable difference} for vowel duration), and
+`large' if it has a value similar to languages where voicing is not neutralized word-finally; these values are about 5 msec and $>$30 msec (see discussion in \citealp{kirby2018mixed}).
+%for the German IN case.
+%for vowel duration-finally. These valu
+%---the \emph{just-noticeable difference}, about 5 msec for vowel duration%---and \citep{nooteboom1980production}---and 
+%`large' if it has a value similar to languages where voicing is not neutralized. word-finally (about $>$30 msec; see \citealp{}).  
+From this perspective, the effect (\Sexpr{diff_means} msec) is very small---probably almost imperceptible.  
+
+However, we might also assess the effect relative to zero, the value predicted by standard theories.  From this perspective, even a tiny effect is scientifically important,
+%(and hence `large'), 
+because it shows that the two classes of words somehow do differ for German speakers, and the effect size may help differentiate between theoretical accounts for the effect.
+%of the effect.\footnote{For example, in the}
+%\footnote{For example, the standard\footnote{} perhaps due to lexical coactivation in speech production.  (This hypothesis)  
+
+Another option would be comparing to closely-related effect sizes in the same study.  For this example, the effect of \ttt{voicing} can be compared to the effect of control predictors, which are 
+%controlled for because they are 
+expected from previous work to affect vowel duration: the presence of a prosodic boundary or word prominence, and speaker gender.  Their effect sizes are (Exercise~\ref{ex:neut-d}):
+\begin{itemize}
+\item \ttt{prosodic\_boundary}: $d = \Sexpr{d_pb}$
+\item \ttt{accent\_type}: $d = \Sexpr{d_acc}$
+\item \ttt{gender}: $d = \Sexpr{d_gender}$
+\end{itemize}
+%(e.g.,\ \ttt{prosodic\_boundary}, \ttt{accent\_type}, \ttt{gender}: $d = 0.62, 0.61, 0.30$)---which are controlled for because they are expected from previous work to affect vowel duration.  
+Voicing again seems to have a `small' effect on duration---smaller than anything else measured in the experiment. 
+% This approach is used for interpreting 
+% %multiple 
+% regression models in later chapters.
+
+% As another example, consider the gender difference on transition duration seen above. This may be an important effect in scientific terms, if we have a strong reason to think from previous literature that there are no real gender differences in turn-taking behavior---it's a surprising result.  But if this effect is being used to talk about a broader question like "do men and women speak differently in general?" (a topic of interest in popular science, for example), the same effect seems less important: the male/female difference is tiny relative to other sources of variability.
+% 
+
+% 
+% For linguistic data, reporting effect sizes is becoming more common---especially for regression models (where the coefficients are effect sizes)---but discussing effect sizes is still not standard.   Thus...
+In language sciences, \textbf{reporting} effect sizes is becoming more common---especially for regression models (where the coefficients are effect sizes)---but \textbf{discussing} effect sizes (what they mean for the study's research questions) is still not standard.
+We will return to different effect size measures, and their interpretation in particular cases, throughout this book. 
+
+\subsection{Correlation coefficients}
+\label{sec:correlations}
+
+%To have another example in mind, 
+
+We digress to review a very common  type of effect size:\footnote{We assume you have seen correlation coefficients before. If not,  parametric and nonparametric correlation coefficients are covered in e.g., \citet[][chap.~5]{field2012discovering}, \citet[][\S5.7]{NavarroOnline}, or many online sources.} the \emph{correlation coefficient} describing the degree of association between two continuous variables, $x$ and $y$, for a sample of $n$ observations.
+%($(x_1, y_1), \ldots (x_n, y_n)$).
+ 
+%We assume you have seen parametric and non-parametric correlation coeffcients before, but to review, 
+
+
+% 
+% When $x$ is categorical with two levels (such as in the \ttt{neutraliation} or \ttt{transition} examples in the previous chapters)
+% \begin{itemize}
+% \item Cohen's $d$ is a way of measuring the \textbf{association} between $x$ and $y$.
+% \item A $t$-test (parametric) or Wilcoxon test (non-parametric) assesses the \textbf{statistical significance} of the association (via $p$-values, confidence intervals)
+% \end{itemize}
+
+The \emph{Pearson's correlation coefficient} measures the degree to which there is a \emph{linear association} between $x$ and $y$, in the population (`looks like a line'):
+\begin{equation}
+\rho_{xy} = \frac{\sigma_{xy}}{\sigma_x \sigma_y},
+\label{eq:pearson-pop}
+\end{equation}
+where $\sigma_{xy}$ is the \emph{covariance} of $x$ and $y$, and $\sigma_x$ and $\sigma_y$ are the variances of $x$ and $y$. So Pearson's correlation is `standardized covariance'.
+
+The \emph{sample Pearson's correlation coefficient} approximates each of $\sigma_{xy}$, $\sigma_x$, and $\sigma_y$  using the sample:
+\begin{equation}
+r_{xy} = \frac{\hat{\sigma}_{xy}}{\hat{\sigma}_x \hat{\sigma}_y}
+\label{eq:pearson-sample}
+\end{equation}
+This is often just written `$r$', and called `Pearson's correlation' (or even `the correlation').
+
+There are different ways to obtain a $p$-value (null hypothesis: $\rho_{xy} = 0$) and 95\% confidence intervals for $r$; they usually give very similar results, so you can just use R's default (via \ttt{cor.test}).\footnote{This default obtains $p$-values from a $t$-test with $df = n-2$ with a test statistic computed from $r_{xy}$.  Section~\ref{sec:slr-categorical} gives some intuition on why a $t$-test applies here.}
+%%
+The important point to remember is that (whatever method is used), $r$ is subject to everything we have learned about hypothesis tests, including:
+\begin{itemize}
+\item $p$ and the 95\% CI depend on sample size---the smaller the sample, the less reliably different from 0 the same $r$ value is.  
+\item When many $r$ values are computed, $p$ and the CI probably should be corrected for multiple comparisons (Section~\ref{sec:multiple-comparisons}).
+\end{itemize}
+These points are important to bear in mind because correlations are often reported as \textbf{descriptive} statistics when summarizing data---without $p$-values/CIs---and sometimes without even sample size. 
+
+% which uses:
+% \begin{itemize}
+% \item A $t$-test (of a statistic related to $r$) with $df = n-2$ to compute the $p$-value\and a normal approximation t transformation of $r$ to give a\footnote{And Fisher's  transformation of $r$ \footnote{\ttt{cor.test}  to carry out a $t$-test with $df = n-2$ based on the typically the differe whether by approximation 
+
+
+% It turns out that a $p$-value and confidence interval can be obtained for $r_{xy}$ using a $t$-test with $df = n-2$ (maybe: ref where can see why).
+
+
+<<cor-ex, echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap="Examples of scatterplots with differing Pearson correlation strengths ($|r|$) and $p$-values. Top row: \\ttt{english} dataset, \\ttt{AgeSubject}=\\tsc{young} observations only. Bottom row: \\ttt{regularity} dataset, \\ttt{Auxiliary}=\\tsc{zijn} observations only.">>=
+english_young <- english %>% filter(AgeSubject == "young")
+regularity_zijn <- filter(regularity, Auxiliary == "zijn")
+english_young %>% ggplot(aes(x = WrittenFrequency, y = RTlexdec)) +
+  geom_point(size = 0.5, alpha = .5) +
+  ggtitle("n=2284") +
+  ylim(6.18, 7.0) +
+  geom_label(aes(label = label), hjust = 1,alpha = .5,
+             data = data.frame(WrittenFrequency = 11.5, RTlexdec = 6.8, label = "r = -0.64, p < 0.001")) +
+  labs(x="Written frequency",
+       y="Reaction time (log msec)")
+
+english_young %>% ggplot(aes(x = Ncount, y = RTlexdec)) +
+  geom_point(size = 0.5, alpha = .5) +
+  ggtitle("n=2284") +
+  ylim(6.18, 7.0) +
+  geom_label(aes(label = label), hjust = 1,alpha = .5,
+             data = data.frame(Ncount = 23, RTlexdec = 6.9, label = "r = -0.096, p < 0.001")) +
+  labs(x="Orthographic neighborhood density",
+       y="Reaction time (log msec)")
+
+
+regularity_zijn %>%
+  ggplot(aes(x = WrittenFrequency, y = WrittenSpokenRatio)) +
+  geom_point(alpha = .5) +
+  ggtitle("n=20") +
+  ylim(-5.5, 5) +
+  geom_label(aes(label = label), hjust = 0,alpha = .5,
+             data = data.frame(WrittenFrequency = 1.25, WrittenSpokenRatio = 4.5, label = "r = 0.33, p = 0.16"))+
+  labs(x="Written frequency",
+       y="Log written-spoken ratio")
+
+regularity_zijn %>%
+  ggplot(aes(x = WrittenFrequency, y = MeanBigramFrequency)) +
+  geom_point(alpha = .5) +
+  ggtitle("n = 20") +
+  geom_label(aes(label = label), hjust = 0, alpha = .5,
+             data = data.frame(WrittenFrequency = 1.25, MeanBigramFrequency = 14.25, label = "r = 0.17, p = 0.47"))+
+  labs(x="Written frequency",
+       y="Mean bigram frequency")
+@
+
+% FUTURE: corrs/p-values/n's not hard-coded
+
+% It is very useful to have a feel for what associations corresponding to different $r$ 
+% %and $p$ 
+% `look like';  tools for this are available online (google ``guess the correlation'').
+% %and we suggest practicing. 
+%For current purposes, 
+
+To get a sense of what different $r$ and $p$ `look like',  Figure~\ref{fig:cor-ex} shows some scatterplots between  pairs of variables in a large subset of the  \ttt{english} dataset (introduced in Section~\ref{sec:english-dataset}: $n = \Sexpr{nrow(english_young)}$) and a small subset of the \ttt{regularity} dataset ($n = \Sexpr{nrow(regularity_zijn)}$). 
+% These relationships differ in the strength of the linear relationship ($|r|$), corresponding to the rules of thumb given above (Section~\ref{sec:effsize-rules-of-thumb}), and its significance ($p$). 
+We again see here the independence of effect size ($r$) and significance: a correlation can be `medium' (using Cohen's rule of thumb) but non-significant, due to low sample size  (bottom-left); or `negligible' but with $p<0.001$ (top-right), because with high sample size anything becomes significant.  
+% 
+% For a large dataset (top row), almost any pair of predictors will show a `significant' correlation ($p < 0.05$)---whether there is actually a strong (top-left) or very weak (top-right) linear relationship.  For a very small dataset (bottom row), no linear relationship will show a `significant' correlation, unless it is very strong (high $|r|$).
+% 
+% large (0.5+), sig: RTlexdec/WrittenFrequency for young speakers
+% 
+% negligible (0.09), sig: RTlexdec/NCount ditto
+% 
+% medium (0.33), n.s.: WrittenFrequency/WrittenSpokenRatio in regularity for zijn
+% 
+% small (0.17), n.s.: WrittenFrequency/MeanBigramFrequency in regularity for zijn
+
+
+Different \emph{non-parametric correlation coefficients} measure the degree of \emph{monotonic association} between $x$ and $y$---does increasing $x$ consistently result in an increase (positive correlation) or decrease (negative correlation) in $y$?  The most common non-parametric correlation coefficients are Spearman's $\rho$ and Kendall's $\tau$.  Both are based on ranks/medians, rather than values/means.  
+
+Nonparametric correlation coefficients address important shortcomings of $r$, which only measures the degree to which  $x$ and $y$ show a linear relationship.  First, 
+%---regardless of whether their relationship is actually well-described by a line.
+%\begin{itemize}
+%\item 
+$r$ isn't sensitive to whether the relationship is  actually linear. The relationship in Figure~\ref{fig:cor-ex} top-left is monotonic, but not linear, so $r$ is misleading---it averages across part of the relationship which is roughly linear (\ttt{WrittenFrequency} $<$ 6), and part which is not (\ttt{WrittenFrequency} $>$ 6).  Second, $r$ is sensitive to outliers. In  Figure~\ref{fig:cor-ex} bottom-left, removing the bottom-left-most point changes $r$ drastically ($r: 0.33 \to -0.06$), while Spearman's $\rho$ changes less ($\rho: 0.09 \to -0.06$).
+
+% FUTURE: fill out example with tables showing Spearman $\rho$ and $p$ for these examples?
+
+
+% FUTURE: potentially more -- wrap up and point forward to other sections/chapters.  Some OK stuff here in comments below.
+%
+% This question takes real thought for most studies in language sciences, where reporting effect sizes is still not standard---so it is just not clear what range of effect sizes are common for a particular research area---and what constitutes a "large effect" will differ by area and type of data. For example
+
+% is especially the case for linguistic data, where reporting effect sizes is still not standard---so it is not clear what range of effect sizes are common for a particular kind of data---and what constitutes "substantive significance" will differ a lot by the research area and type of data.   For example, within phonetics, using current methods articulatory measures (e.g.,\ tongue position) are much noisier than acoustic measures e.g.,\ vowel formants).  So what Cohen's $d$ constitues a "large effect" should be smaller for articulatory studies than for acoustic studies, all else being equal.   Furthermore, what constitutes "large" or "small" effects will differ by the effect size measure used (e.g.,\ Cohen's $d$ versis a correlation coefficient).  As another example, consider the gender difference on transition duration seen above. This may be an important effect in scientific terms, if we have a strong reason to think from previous literature that there are no real gender differences in turn-taking behavior---it's a surprising result.  But if this effect is being used to talk about a broader question like "do men and women speak differently in general?" (a topic of interest in popular science, for example), the same effect seems less important: the male/female difference is tiny relative to other sources of variability.
+% 
+% 
+% For example, consider the example just above, where the size of the effect of consonant voicing on vowel duration is XX msec, or $d = XX$.  On the one hand, these 
+% 
+% the goal of the research is to determine whether neutralization in German is complete, relative to linguistic theories which say it should be, then potentially  
+% 
+% 
+% Despite all these caveats, it is useful to know a rule of thumb originating with Cohen 1988 which is widely used to interpret Cohen's $d$ in behavioral research:
+% - $|d|<0.2$: small effect
+% - $0.2 < |d| < 0.5$: medium effect
+% - $|d|>0.8$: large effect
+% 
+% 
+% 
+% 
+% Clcaulating effect size measures
+% 
+%  How to assess effect size (sometimes called "substantive significance": Kline 154--158,  Kelley \& Preacher) is a more subjective matter, that depends on the exact research questions and context.  This is especially the case for linguistic data, where reporting effect sizes is still not standard---so it is not clear what range of effect sizes are common for a particular kind of data---and what constitutes "substantive significance" will differ a lot by the research area and type of data.   For example, within phonetics, using current methods articulatory measures (e.g\ tongue position) are much noisier than acoustic measures e.g.,\ vowel formants).  So what Cohen's $d$ constitues a "large effect" should be smaller for articulatory studies than for acoustic studies, all else being equal.   Furthermore, what constitutes "large" or "small" effects will differ by the effect size measure used (e.g.,\ Cohen's $d$ versis a correlation coefficient).  As another example, consider the gender difference on transition duration seen above. This may be an important effect in scientific terms, if we have a strong reason to think from previous literature that there are no real gender differences in turn-taking behavior---it's a surprising result.  But if this effect is being used to talk about a broader question like "do men and women speak differently in general?" (a topic of interest in popular science, for example), the same effect seems less important: the male/female difference is tiny relative to other sources of variability.
+%  
+% - Kelley \& Preacher: nice discussion of how large effect size could have small substantive signifcance, and vice versa -- depends on the context 
+%  
+% - K\&P argue strongly against dichotomizing effect sizes -- it's context-dependent. 
+%  
+
+% 
+% ---"the degree to which interested parties (scientists, practitioners, politicians, managers, consumers, decision makers, the public at large, etc.) would consider a finding
+% important and worthy of attention and possibly action.?  e is context specific and can mean different things to
+% different parties in different situations. counts as 'important'
+% 
+% 
+% ---
+% 
+% What all these methods have in common is assessing the *size* of an effect, as opposed to *confidence* in the effect---most commonly assessed using "significance" measures like the $p$-value from a hypothesis test (REF to below).  It is imperative to remember that effect size and signifcance are independent dimensions
+% 
+% The simplest way to see this is just thinking about the same result with different sample sizes.  If you knew that the means and variances in example above were from 5 observations rather than $n=XX$ (real size), you would be less confident that the male/female difference is "real"---yet any measure of effect size would be the same (because effect size measures don't depend on sample size, by definition).  And if we did this study again with 100x the speakers but found only a 10 msec difference, we would still be confident that this difference is "real" given the large sample size.
+
+
+\section{Type I/II errors and power}
+\label{sec:type-i-ii-power}
+
+
+%\subsection{Type I and Type II errors}
+In the NHST paradigm introduced in the last chapter, to decide whether an effect exists we apply a hypothesis test with significance level $\alpha$, resulting in rejecting or failing to reject the null. The null may be true or not 
+%This is different of whether the null is true or not 
+in reality. Thus, there are two kinds of errors we can make:
+\begin{itemize}
+\item \emph{Type I error} (or `false positive'): falsely concluding there is an effect when none exists.
+\item \emph{Type II error} (or `false negative'): falsely concluding there is no effect when one in fact exists.
+\end{itemize}
+%(a \emph{Type II error}, or `false negative'). 
+And there are four possible outcomes:
+\begin{tabular}{cccc}
+\toprule
+& & \multicolumn{2}{c}{Statistical analysis result (\textbf{sample})} \\
+& & reject $H_0$ & don't reject $H_0$ \\
+\midrule
+Reality & $H_0$ is true & Type I error ($\alpha$)  & correct decision (`significant')   \\
+(\textbf{population}) & $H_0$ is false & correct decision (`null result') & Type II error ($\beta$)  \\
+\bottomrule
+\end{tabular}
+%The Type I error rate is normally denoted $\alpha$ the Type II error rate is denoted $\beta$. 
+
+
+The rate of a Type I error is denoted $\alpha$. For an NHST test, this is just the significance level, which we have set in advance, defined as how often we will make the wrong decision over the long term if the null is true. %(And assuming all test assumptions are met---we return to this point in Section~\ref{sec:conservative-anti}.)  
+Type I errors are arguably more familiar, and everyday statistical practice places considerable emphasis on avoiding them, as reflected in the convention to set $\alpha$ to 0.05 or 0.01.
+The rate of a  Type II error is denoted $\beta$. 
+
+% FUTURE: wording confusing - Michaela. maybe add a sentence to make clearer the 'conditional' aspect of Type I errors -- you are reasoning about an error in world H_0, but P(H_0) may be quite low.
+Although  statistical practice focuses largely on Type I errors (via $p$-values), this is odd because we get Type I errors by assuming the null is true---yet the null hypothesis is typically neither true nor interesting: ``Researchers typically test a null hypothesis with the hope of being able to reject it so that they may infer that their data better fit another, more interesting hypothesis'' \citep[][490]{hallahan1996statistical}.  Thus, it makes sense to consider the types of errors that we make assuming the null is \textbf{not} true: Type II errors,
+%(via power), 
+and errors in the sign and magnitude of the (non-null) effect. These errors are our focus in the rest of this chapter. 
+
+
+\subsection{Power}
+\label{sec:power}
+
+Rather than considering Type II error directly, it is conventional to consider \emph{power}, defined as $1 - \beta$:  the probability of rejecting the null hypothesis when it is false.
+%More intuitively, 
+Power is one way to capture the `sensitivity' of a statistical procedure to find an effect when one actually exists \citep[][68]{dienes2008understanding}.   
+
+
+Before proceeding, it's worth considering---why should we care about power/Type II error?  Statistical practice in language sciences tends to focus mostly on Type I error (especially via the $p$-value), while power is not usually considered---mirroring the situation in most behavioral and social sciences, despite calls for reform dating
+%at least 
+to the 1960s \citep[e.g.,][]{cohen1969statistical}.
+
+A lot has been written about why this is a problem, and considering both Type I and Type II errors are important---especially when planning new studies (e.g.,\ any reference discussing power in `Other reading': Section~\ref{sec:other-reading-ch3}).
+%The reasons essentially boil down to replicability, and have becomewith the broader `replicability crisis'.
+% 
+% \footnote{Most general references on power and effect size at the end of this chapter contain discussions, as do  }
+% Many good sources explain why this is a problem (REFS), and considering both Type I and Type II errors are beneficial---especially when planning new studies.   
+Here are some key reasons to consider power after data is collected---in data analysis and reading published studies---which are unintuitive if you are used to thinking in terms of just Type I error/$p$-values:
+\begin{tabular}{p{5cm}p{5cm}}
+\toprule
+Usual thinking & Reality   \\
+\midrule
+``A null result doesn't tell me anything.'' &
+Whether null results are informative depends on power. 
+
+\\
+``A statistical method is better if it is more conservative (fewer spurious results).'' & 
+Type I and Type II error usually trade off for different methods---more conservative methods (good) have lower power (bad). 
+
+\\
+``A low $p$-value means an effect is reliable.'' & Significant results can be misleading, depending on power. 
+\\
+\bottomrule
+\end{tabular}
+% 
+% - usual: `a highly significant result is reliable'
+% - reality: significant results can be misleading, depending on power.
+
+% 
+% - usual thinking: `a method is better if we are less likely to incorrectly reject the null'
+% - reality: Type I and Type II errors tend to trade off in different analysis methods---more conservative methods generally have lower power.
+% 
+% - usual thinking: `a null result doesn't tell me anything'
+% - reality: whether null results are informative depends on power
+% 
+% - usual: `a highly significant result is reliable'
+% - reality: significant results can be misleading, depending on power.
+% 
+
+We expand on these points using examples in the following sections (\ref{sec:interp-null-results},  \ref{sec:error-trade-offs}--\ref{sec:multiple-comparisons}, \ref{sec:type-m-s-error}).
+
+\paragraph{Power calculations}
+
+Power 
+%The power of a hypothesis test 
+is a function of several factors:
+ \begin{enumerate}
+ \item The sample size
+ \item The true effect size
+ \item The amount of variability in the data
+ \item The significance level ($\alpha$).  
+ \end{enumerate}
+ %All else being equal, 
+ An effect is more likely to be detected in a study with a larger sample, if the (true) effect size is larger, if the data is less noisy, or with a less stringent cutoff (higher $\alpha$).  (If a standardized effect size is used, (1) and (3) are combined into one measure such as Cohen's $d$.) Power also depends on 
+ \begin{enumerate}
+ \item[5.] the statistical procedure used
+ \end{enumerate}
+% (5) the statistical procedure used---
+This point is discussed below (Section~\ref{sec:maximizing-power}).
+% For example, a parametric hypothesis test 
+% %(e.g.,\ a $t$-test)
+% will typically have higher power than its non-parametric equivalent. %(discussed below).
+% %(e.g.,\ a Wilcoxon test) when applied to data for which its assumptions are met (below ...).\footnote{In general the more estimates/fewer assumptions go into a test statisistic, the broader its distribution. This implies a larger \(p\)-value, and (assuming the null hypothesis is in fact false) means the test has less power to detect differences.}
+
+Assuming the statistical procedure is fixed, power can be calculated given values of (1)-(4), or
+%is a function of (1)--(4), and `power calculations' consist of determining power given values of (1)--(4), or determining 
+the necessary value of one of (1)-(4) to achieve a given power level can be determined.  Power calculations can be done in study planning or interpreting results. A priori power calculation, for example to assess the sample size necessary to detect an effect of a given size, is an important topic, and the focus of most introductions to power (see references in Section~\ref{sec:other-reading-ch3}).
+%% Cut: Dec 1
+%\footnote{Typically a priori power calculations focus on sample size or study design, because other determinants of power are less accessible---e.g.,\ true effect size is determined by the phenomenon itself, and the level of variability is not typically under the researcher's control.} 
+In this book we assume that all data has been collected, so we focus on power for interpreting results. 
+%% Cut: Michaela advice
+%Importantly, this will \textbf{not} mean simply calculating power for a study using its observed effect size---which is currently common practice, but gives no useful information (Box~\ref{box:observed-power}).
+
+While power and Type I error are related, one does not determine the other, because of the roles of (1)--(3). 
+%sample size, effect size, and variability.
+A common critical value for $\beta$, analogous to $\alpha = 0.05$ for rejecting the null, is $\beta = 0.2$, giving power of 80\%.
+
+\begin{boxedtext}{Broader context: The problem with observed power}
+\label{box:observed-power}
+Computing power for a study that has already been conducted seems simple: just use the effect size and variability observed in the study to calculate \emph{observed power} for the statistical test used.   While widely used in behavioral/social sciences, observed (or `retrospective') power analysis is in fact pointless \citep[e.g.,][]{cox1958planning,hoenig2001abuse,okeefe2007post}.
+This is because power can be computed directly from the $p$-value, (given the study design, observed effect size, and variance observed effect size, and variance); thus, power gives no additional information once the $p$-value is known.  Intuitively: if a significant effect ($p<0.05$, say) was/was not found, you will compute that observed power must have been high/low to give an effect of the observed size. A common (mis-)use of observed power is to explain away a null result, by showing that power to detect the observed effect was low (e.g.,\ $<$0.8).
+Compared to true power, observed power  will tend to be too high for significant results, and too low for null results.  
+
+However, power calculations made after the study has been conducted can still be informative---as long as we don't just plug in our observed effect size/variability---as discussed below (`design analysis': Section~\ref{sec:design-analysis}, Box~\ref{box:true-effect-size}).
+\end{boxedtext}
+
+We first do a basic power calculation to show how it can be computed, then go on to several examples which demonstrate the importance of considering power in data analysis. 
+
+%Since power is less familiar than Type I error, we first do some power calculations in an example to give intuition.  
+
+\subsection{Example}
+\label{sec:power-ex}
+
+To give a sense of how power varies as a function of the true effect size and sample size, we consider the case addressed in the \ttt{neutralization} data: detecting differences in vowel duration before voiced and voiceless consonants in a given language.  
+
+
+We will compute power for a two-sample $t$-test, assuming that the two samples (\tsc{voiced} and \tsc{voiceless}) have equal size.  To compute power we need to specify (1)--(4) from above.  Let's assume that the degree of variability $\sigma$ is fixed, at 45 msec---roughly the value observed in the \ttt{neutralization} data---and hold $\alpha$ fixed at 0.05.\footnote{If we're going to use these power calculations to reason about the \ttt{neutralization} data (we are), it is not ideal to set $\sigma$ based on our sample (Box~\ref{box:observed-power}).  We are just assuming this number to keep the example simpler. In a real application we would want some independent motivation for the value(s) of $\sigma$ used.}
+
+We consider three possible true effect sizes, using the difference in means between \tsc{voiced} and \tsc{voiceless} as the effect size, based on the discussion in Section~\ref{sec:in-context}:
+\begin{enumerate}
+\item 5 msec: the just-noticeable-difference for vowel duration differences
+\item 10 msec: approximate size of the `incomplete neutralization' effect in German (from \citealp{nicenboim2018using} meta-analysis: see Box~\ref{box:mixed-results})
+\item 30 msec: the rough size of the minimum difference in languages where the voicing contrast is not `neutralized' (e.g.,\ English)
+\end{enumerate}
+
+Conceptually, we can think of these three effect sizes as `complete', `incomplete', and `no' neutralization.  
+
+We vary sample size between 25 and 500. Note that 25 is roughly the sample size per subject in the \ttt{neutralization} data, while 375 is the sample size for the whole dataset.  (There are 375 \tsc{voiced}/\tsc{voiceless} pairs, corresponding to $n = \Sexpr{neut_n}$ rows.)  This range is arbitrary, but could be thought of as samples sizes ranging from a `very small' to a `large' study of German incomplete neutralization.
+%\footnote{\citet{roettger2014assessing} was the largest experiment of this phenomenon to date.}
+ 
+%To compute power for a two-sample $t$-test, we use 
+Power calculations for all basic types of hypothesis tests
+%---$t$-tests, $\chi^2$-tests, etc.---
+can be done using the pwr package. The \ttt{power.t.test()} function  computes power for a $t$-test.
+%\ttt{pwr} package \citep{pwrPackage}.)
+For example, for our sample when effect size=10 and $n=50$:
+
+<<>>=
+## Default: two-sample, two-sided, alpha=0.05
+power.t.test(n = 50, delta = 10, sd = 45)
+@
+
+To compute power across different effect sizes and sample sizes, we use a method from the \ttt{map()}-family in  purrr
+%\ttt{purrr}
+(which applies a function to each element of an object):
+
+<<output.lines=1:3>>=
+## Vary effect size and sample size as discussed
+crossing(d = c(5, 10, 30), n = seq(5, 500, by = 5)) %>%
+  ## Compute power
+  mutate(power = map2_dbl(n, d, ~ power.t.test(.x, .y, sd = 45)$power))
+@
+
+<<power_plot_1, echo=FALSE, fig.asp = .6,  fig.cap="Power for a two-sample $t$-test as true effect size (difference in means) and sample size are varied, with variability ($\\sigma = 45$) and significance level ($\\alpha = 0.05$) held fixed.  In background: the horizontal line indicates 80\\% power, and the vertical lines indicate two sample sizes (25, 375) referenced in the text.">>=
+df_1 <- crossing(d = c(5, 10, 30), n = seq(5, 500, by = 5)) %>%
+  mutate(power = map2_dbl(n, d,  ~power.t.test(.x, .y, sd=45)$power))
+
+df_1$d <- factor(df_1$d)
+df_1 %>% ggplot(aes(x = n, y = power)) +
+  geom_line(aes(color = d, lty=d), size=1.5) +
+  geom_vline(aes(xintercept = 375), alpha = 0.25) +
+  geom_vline(aes(xintercept = 25), alpha = 0.25) +
+  geom_hline(aes(yintercept = 0.8), alpha = 0.25) +
+  xlab("Sample size") + ylab("Power") +
+  scale_color_grey() + scale_fill_grey() + 
+  guides(color  = guide_legend(title = "Effect size\n(msec)"), lty=FALSE) +
+  theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank())
+@ 
+
+The results are plotted in Figure~\ref{fig:power_plot_1}. The general pattern is as expected: power increases as the sample size or the true size of the effect increases.  The three curves shown in the  plot are useful for
+%pattern is
+%useful for 
+interpreting the results of studies examining each kind of neutralization: `complete', `incomplete', and `no neutralization'.  For example, consider points on these curves corresponding to two samples sizes of interest:
+%individual points on the sample sizes corresponding to 
+one subject ($n=25$) and all subjects ($n=375$) in the \ttt{neutralization} experiment:
+\begin{itemize}
+\item Power to detect `complete neutralization' (5 msec) is low---less than 50\% across sample sizes.  For example, a study with $n=375$  would be 67\% likely to give a null result even though an effect exists. 
+\item Power to detect `incomplete neutralization' (10 msec)  ranges from very low (when $n<100$) to high (above the 80\% threshold for $n > 300$). Thus, if this is the true effect size, a null result is unsurprising if $n=25$, but (relatively) surprising if $n=375$.
+\item Power to detect `no neutralization' (30 msec) is very high, as long as sample size is above about 50. A null result is not surprising if $n=25$, but very surprising if $n=375$ (power$\approx$1).
+%so a null result would be very surprising.
+\end{itemize}
+
+
+\subsection{Interpreting null results}
+\label{sec:interp-null-results}
+
+\subsubsection{Using power}
+The example above illustrates an important application of power: interpreting `null results' ($p>\alpha$). Concluding from non-significance that there is `no effect' is a common fallacy (Section~\ref{sec:p-value-misconceptions})---the $p$-value is not the probability that the null hypothesis is true.  In order to avoid this pitfall, it is sometimes taught or propagated in practice, that null results are uninterpretable.  However, this depends on power. When power is low, a null result is not informative: it would be likely to occur whether the null were true or not. It makes sense to have this interpretation as one's default, because most studies are underpowered (Box~\ref{box:mixed-results}).
+
+However, \textbf{when power is high, a null result is meaningful}: if there were an effect of this size, we would be surprised to not detect it. For the \ttt{neutralization} case, we could conclude
+%conclude since power is high  the we can conclude 
+that any effect that exists is smaller than 10 msec.   
+% compression
+%This is part of a more general point, which we return to when we discuss errors in effect size below: in a high-powered study, results give useful information regardless of the $p$-value.
+
+There is an important caveat to this reasoning: computing power requires knowing the true effect size (and degree of variability), but in reality these are unknown.
+%(that's why we're doing a study). 
+So reasoning about null results requires at least specifying what the smallest interesting parameter value is (`substantively significant': Section~\ref{sec:interpreting-es})---functionally the same as zero (Box~\ref{box:true-effect-size}).  For the \ttt{neutralization} example, $\Delta = 5$, the value we have decided indicates `complete neutralization'.
+%discusses further.
+% 
+% - There is a very important caveat here: computing power requires knowing the true effect size (and degree of variabililty), but in practice this is unknown (that's why we're doing a study).  So reasoning about null results requires at least specifying what the smallest "interesting" parameter value is---scientifically the same as zero---under the alternative hypothesis.  (footnote: this point holds for any method!)  (ref back to 'substantive significance')
+
+% adds nothing?
+%Given a true effect size (and $\sigma$), you can calculate power---as a measure of `sensitivity' to detect an effect of this size \citep{dienes2008understanding}.
+
+\subsubsection{Using confidence intervals}
+
+However, calculating power can be difficult (e.g.,\ for mixed-effects regression models, where simulation is required: see Section~\ref{sec:power-mixed-effects}),
+and interpreting power can be unintuitive.  In practice a more approximate measure of `sensitivity' than power calculation is often easier for interpreting a null result.  We examine the 95\% confidence interval (which includes 0 for a null result), and apply this rule of thumb (\citealp{hoenig2001abuse}; \citealp[][72--73]{dienes2008understanding}):
+%which it is already recommended to compute and report for effects of interest (Section~\ref{sec:reporting-hypothesis-tests}).  
+%
+%Let $\delta$ be the smallest interesting effect size referred to above.  
+%A rule of thumb for interpreting null results is  ):
+% think Vasishth wouldn't want these cited?
+%\citealp{vasishth2014introduction}):
+\begin{itemize}
+\item If the confidence interval is narrow (it includes 0 but not $\delta$ or $-\delta$), the null is (tentatively) `effectively true'.
+\item If the confidence interval is wide (it includes 0, and either $\delta$ or $-\delta$), the result is inconclusive.
+\end{itemize}
+
+
+
+% - However, calculating power can be annoying or unintuitive, and a different measure of 'sensitivity' is often easier in practice: examining the 95\% confidence interval (which for a null result includes 0, by definition). (H\&H: "Once we have constructed a confidence interval, power calculations yield no additional insights.")
+
+% The logic goes (from Hoenig \& Heisley 2001 Sec 4, cited in Vasishth lecture notes)
+% - If result is null and CI is narrow [= doesn't include minimally interesting value, on either side of zero], some justification for null being "effectively true".
+% - If result is null and CI is wide, result is inconclusive.
+
+As an example, consider Figure~\ref{fig:mult-comp-0},
+%in Section~\ref{sec:mult-comp-ex},
+which shows approximate 95\% CIs for the effect of voicing on each subject.
+There are 9 subjects with null results; for each subject the CI overlaps $\pm$5 msec ($\delta = 5$).
+%which we have decided indicates `complete neutralization'. 
+So whether or not the effect is zero is in fact inconclusive for every one of these subjects.
+% 
+% More: see Dienes 72-73, Hoenig \& Heisley, Vasishth.
+
+<<mult-comp-0, echo=FALSE, out.width="45%", fig.width=default_fig.width*.45/default_out.width, fig.cap="Summary of voiced-voiceless duration differences for each of the 16 speakers for the \\ttt{neutralization} data. Points/errorbars are means $\\pm$ 2 standard errors.">>=
+# this is neut_paired, repeated in a figure below
+neutralization %>%
+dplyr::select(subject, item_pair, vowel_dur, voicing) %>%
+spread(voicing, vowel_dur) %>%
+remove_missing() %>%
+mutate(diff = voiced - voiceless) %>%
+  ggplot(aes(x = factor(subject), y = diff)) +
+  stat_summary(fun.data = mean_se, fun.args = list(mult = 2)) +
+  geom_hline(aes(yintercept = 0), lty = 2) +
+  xlab("Subject") +
+  ylab("Voiced-voiceless\nduration difference") +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5))
+
+@
+
+
+%We return to this point when we discuss `design analysis' below: in a high-powered study, results give useful information regardless of the $p$-value.
+
+\begin{boxedtext}{Broader context: Interpreting `mixed' results---power and meta-analysis}
+\label{box:mixed-results}
+
+The text shows how power is important for interpreting the results of single studies, including null results---in addition to the $p$-value. Power is also crucial for answering: What can we conclude from a literature of studies of (more or less) the same phenomenon?   Strictly speaking this is the domain of \emph{meta-analysis} 
+% lipsey reference removed; was only cited once
+\citep{cumming2012understanding}, a methodology for pooling the results of previous studies to determine likely parameter values. But even in the absence of formal meta-analysis, the same considerations of power that apply for individual studies can be used to interpret a literature. 
+
+Across language sciences there are theoretically important phenomena where the literature gives `mixed' results---both significant and null findings.  (Or significant results in conflicting directions.)  The usual approach in linguistics and psychology is to simply count the percentage of significant findings; if not near 100\% or 0\%, the literature is said to give ambiguous evidence on whether the effect exists. This reasoning is incorrect, especially given that most studies in linguistics are likely under-powered \citep[][chap.~10]{winter2019statistics}, similarly to psychology where the median power is about 0.50  \citep[e.g.,][]{maxwell2004persistence}.  With power of 0.50, the number of null and significant results will be roughly equal {even when there is a true effect}!  Thus, even thinking about power at a rough level can help in summarizing a `mixed' literature. For example if studies with null results have low sample size (suggesting lower power), this is consistent with a true effect; if some such studies have high sample size, the literature is not consistent with a true effect.
+%or high sample size? studies with null/significant results tend to have high/low sample size?  If the former, the literature is consistent with a true effect; if the latter, it is not.
+
+In the German incomplete neutralization literature, it turns out that the null results all come from low-powered studies, so the literature is consistent with there being a small but real effect. \citet{kirby2018model,kirby2018mixed} summarize the logic in this case using power calculations, while \citet{nicenboim2018using} conduct a formal meta-analysis of all (14) studies to date and find strong evidence for a small but real effect (voiced/voiceless vowel duration difference of  $\sim$10--12 msec)---despite null results in 50\% of individual studies.  Meta-analyses are still fairly new in linguistics, but 
+%they have great potential---
+examples so far in psycholinguistics have shown that `mixed' evidence for a long-studied phenomenon sometimes strongly supports a true effect, and sometimes strongly suggests there is {no} effect \citep{vasishth2013processing,mahowald2016meta,jager2017similarity}.
+% 
+% Of course, in practice the true effect size (or degree of variability) is unknown, so any power calculation for interpreting completed studies relies on an educated guess.  But even thinking about power at this rough level can be useful for interpreting results from one study, or a body of studies, especially when results are `mixed'. paraphrase Nicenboim et al., K\&S logic---IN literature shows `mixed' results like many. but it turns out from some reasonably power calculations, the only `null results' are from plausibly low-powered studies.  In this situation, literature is consitent with there being a small but real effect---there is no conflict.  (later fleshed out in the meta-analysis paper.  adapt text from JPhon on meta-analysis, in comments)
+% 
+% (moved here:)
+% - meta-analysis by Nicenboim et al: suggests a true effect, of ~10 msec, pooling evidence across 14 studies
+% We now turn to our Q2: what can we conclude from a collection of studies of (more or less) the same phenomenon? Strictly speaking this is the domain of ‘meta-analysis’ (Lipsey & Wilson, 2001; Cumming, 2013), a methodology for pooling the results of previous studies to determine likely parameter values. For example, the paper by Nicenboim et al. (this issue) conducts a meta-analysis of 14 previous studies of German incomplete neutralization, and concludes that there is a small but real effect.
+\end{boxedtext}
+
+
+\subsection{Maximizing power}
+\label{sec:maximizing-power}
+
+It should be clear by this point that 
+%Interpretability of null results is one reason
+we want to {maximize power} when carrying out quantitative studies and analyzing their results, because a high-powered study
+%for interpretability of null results, more precise effect sizes (discussed below), and so on. 
+%other reasons are more precise effect sizes (which affects interpretability of )
+%high-powered study, results 
+gives useful information regardless of the $p$-value.
+
+Consider factors (1)--(5) affecting power, from Section~\ref{sec:power}.  The most obvious way to increase power is to carry out a higher-power study ((1)--(3): larger sample size, less variability, or larger effect).  This route
+is
+%very important, but 
+outside the scope of this book, which focuses on data that has already been collected (see readings in Sec.~\ref{sec:other-reading-ch3}). The convention in data analysis is to control Type I error by fixing $\alpha$ (factor (4)).  This leaves different analysis methods (5).
+
+Sometimes it is possible to increase power without affecting Type I error by using a different analysis method.   For example:
+\begin{itemize}
+\item Parametric tests are usually more powerful than their non-parametric equivalents (e.g.,\ $t$-test vs.\ Wilcoxon test), {if} the assumptions of the parametric test are met (e.g.,\ normally-distributed data).
+% could add back in:
+%\citep[e.g.,][667]{field2012discovering}.  
+In general, the more assumptions a test makes, the higher its power (when these assumptions are met).\footnote{This is because as a rule, the more estimates/fewer assumptions go into a test statistic, the broader its distribution under the null hypothesis. This implies a larger \(p\)-value, and (assuming the null hypothesis is in fact false) means the test has less power to detect differences.}  \item The most popular method for correcting for multiple comparisons (Bonferroni)  can be replaced by another method with higher power, without increasing Type I error (Section~\ref{sec:multiple-comparisons} below).\footnote{We assume you have previous exposure to multiple comparisons and at least one procedure to correct for them (probably Bonferroni), which are covered in most introductory applied statistics texts (e.g.,\ \citealp[][\S14.5]{NavarroOnline}; \citealp[][\S10.5]{field2012discovering}).}
+\end{itemize}
+
+%That is, there is sometimes an unambiguously `better' method, in the sense of higher power without raising Type I error.  But more commonly, different analysis methods trade off Type I and Type II error.
+%, as we now discuss.
+
+\subsection{Type I/II error trade-off}
+\label{sec:error-trade-offs}
+
+
+When analyzing any dataset to address some research questions, there are always multiple  analysis methods to choose between which are plausibly `right'.  What are the consequences of using one method versus another?  
+Sometimes one method is unambiguously `better', in the sense of higher power without affecting Type I error (examples above).  But in practice, there is typically a trade-off between Type I and Type II error.
+
+
+% Whether choosing among hypothesis tests or different regression methods, there are always multiple `right' ways one analyze one's data, which are plausibly `right'.  What are the consequences of using one method versus another?
+% 
+% - For any data there are always different ways to analyze. What are the consequences of using one versus another?  In practice there is typically a trade-off between Type I and Type II error.
+
+\subsubsection{Conservative and anti-conservative}
+\label{sec:conservative-anti}
+
+This trade-off is easier to think about if we first define terms to discuss errors in the $p$-value (which we are used to thinking about), rather than Type I error per se (which we never observe directly).
+
+Applying different NHST methods to the same data 
+%from an experiment 
+will give different $p$-values (e.g.,\ $p_1$, $p_2$). For example, suppose the null hypothesis is true, and we have fixed the significance level at 0.05. If the experiment is repeated many times, different methods will give different rates of false positives:
+$$
+\alpha_1 \approx \text{how often } p_1 < 0.05, \quad
+\alpha_2 \approx \text{how often } p_2 < 0.05
+$$
+
+These are the \text{real} Type I error rates of each method, which we denote with $\alpha_i$.
+%Although we denote them with $\alpha_i$, 
+These rates are not the same as the significance level (typically written $\alpha$)---the target (or \emph{nominal}) Type I error rate---because each hypothesis test relies on many assumptions, 
+which may be violated to some degree, and the test may also give higher Type I error in some situations (e.g.,\ small sample size, high variance) than in others.
+
+Formally, a hypothesis test is:
+\begin{itemize}
+\item \emph{Conservative} if $P( p \le \alpha | H_0) < \alpha$,
+\item \emph{Anti-conservative} (or `liberal') if $P(p \le \alpha | H_0) > \alpha$,
+\end{itemize}
+whenever its assumptions hold \citep[][sec.~4.4.5]{good2006resampling}.
+
+% - Applying different methods to the same data will give different $p$-values. Repeat the experiemnt many times, with null true, will get different numbers of false positives. These are the *real* Type I errors of each method.  Not the same as $\alpha$, because each hypothesis test relies on a bunch of assumptions---which are not in general true.  
+% 
+% Formally:
+% * Conservative: $P(p \le \alpha | H_0) < \alpha$
+% * Anti-conservative (or `liberal'): $P(p \le \alpha | H_0) > \alpha$
+
+%% note to self -- tried a good deal to find a definition of 'conservative' that isn't based on wikipedia and lecture slides, without success. but I think this definition is right, constructed with help from a paragraph in Good resampling book. it is consistent with the use of 'conservative' in many stats books (where it's nonetheless not defined).
+Informally, a `conservative' test tends to give $p$-values which are too high and an `anti-conservative' tends to give $p$-values which are too low (and CIs which are too narrow/wide, repsectively).
+%it tends to give $p$-values which are too low. 
+This is the sense in which the terms are often used in data analysis---a `more conservative' test makes false positives less likely. Since most researchers are used to thinking in terms of $p$-values, it is common to talk about different statistical procedures in terms of conservativity rather than Type I error. It is also common in practice (although this isn't strictly allowed by the definition above) to use `conservativity' to discuss the effects of violating an assumption of a procedure, e.g.,\ ``the normal approximation to the test statistic gives a conservative $p$-value.''  %(Basically, ``conservative when X'' is being used as a synonym for ``the $p$-value tends to be lower when X is true.''.)
+% 
+% \footnote{Note that `conservativity' is  a property of a test applied in a particular setting---the same method could be conservative if its assumptions are met, and anti-conservative if one assumption isn't met. This is in practice how the term is often used, e.g.,\ ``method X is anti-conservative for small sample sizes'', or ``the normal approximation to the test statistic gives a conservative $p$-value''.}
+%\footnote{Note however that the $p$-value interpretation is less precise, because there is no guarantee that the $p$-value obtained in a single experiment is `too high'
+%(However, the same test could be conservative when applied in some situations, and anti-conservative in others)
+
+For example, suppose we analyze the same data using a one-sided versus two-sided $t$-test, with $\alpha = 0.05$. $p$ for the one-sided test ($H_0:$ effect is not positive) is always one-half of its value for the two-sided test ($H_0$: effect is zero), so the false positive rate is 50\% lower for the one-sided test.  In reality, in almost all cases the parameter being estimated is either positive or negative, not zero, so the two-sided test is conservative. (For example, in our running \ttt{neutralization} example, we know that any effect will show \tsc{voiced}$>$\tsc{voiceless}.)  
+%In this setting 
+% 
+% For example, one-sided versus one sided two-sample $t$-test, with same significance level $\alpha = 0.05$.  $p$ is always lower for one-sample test, so false positive rate is 50\% of two-sample test.  In reality the parameter being estimated is positive or negative, never zero. So the two-sample test is *conservative*.
+
+\subsubsection{The trade-off}
+
+Different statistical methods applied to the same data tend to trade off in conservativity and power: more conservative (good) tends to mean lower power (bad), and vice versa. This is a more intuitive way of saying ``Type I and Type II error tend to trade off''.
+
+Once you know it exists, this trade-off comes up frequently in
+%tension between Type I and Type II errors in
+choosing between methods.  For example:
+\begin{itemize}
+\item The two-sided $t$-test in the discussion above will fail to detect some small differences between two samples that would have been detected by a one-sided test. The two-sided test is more conservative, but has lower power.
+
+\item In Chapter~\ref{chap:mem-3} we discuss a debate over how to analyze grouped data (whether `maximal' random effect structure should be used) which generated significant discussion throughout the 2010s---which essentially comes down to a choice between power and conservativity.
+%maximizing power and minimizing Type I errors. 
+
+\item Different ways of correcting for `multiple comparisons', as discussed in the next section.
+\end{itemize}
+
+% 
+% 
+% Now: different statistical methods applied to the same problem tend to trade off in conservativity and power. More conservative (good) tends to mean lower power (bad), and vice versa.   This is a more intuitive way of saying "Type I and Type II error tend to trade off".
+
+% For example, the two-sample $t$-test will fail to detect some small differences between groups that would have been detected by a one-sample $t$-test---the two-sample test is more conservative, but has lower power.
+% 
+% Another example:
+% -  lowering $\alpha$. Can be seen  as a more rigorous way to analyze data (cite that p -> 0.005 article)---false positives will be less likely---but also has the effect of raising Type II error.
+% 
+% A key example is different multiple comparison methods
+
+% When should you use parametric versus non-parametric hypothesis tests, more generally? It depends on what your data looks like, and how much you weight the risk of missing a true effect ( \emph{Type II error}, which is one minus \emph{power}) versus the risk of detecting a spurious effect (\emph{Type I error}).If you have a choice between a parametric and non-parametric test (such as \(t\)-tests and Wilcoxon tests):
+
+In such cases, 
+%Because of this trade-off, 
+choosing between different analysis methods  often means choosing how much you care about Type I versus Type II errors.  The convention in linguistics and psychology, as in many fields, is
+%cognitive/behavioral sciences is
+to prioritize minimizing Type I error over Type II error \cite[e.g.,][]{nickerson2000null}.
+%% FUTURE: add more refs here (notably from linguistics/psych)?
+%(REF: Nickerson, others). 
+This motivates the use of NHST testing (where $p$-values are the focus), and the lower `reference' level for $\alpha$  than for $\beta$ (commonly  0.05 or 0.01, vs. 0.2)  used by convention---which implies that we can live with missing 20\% of true effects, but we only want a 1--5\% chance of a spurious effect.
+% removed for brevity: 12/21
+% \footnote{ \citet{nickerson2000null}
+% %Nickerson (REF 233-244, citing Feinberg 1971) 
+% provides the useful analogy that this logic is similar to the `innocent until proven guilty' principle central to criminal law in the US (and many other countries).
+% %criminal justice system (and that of many other countries), 
+% The system  presumes `innocence' (= the null hypothesis), and tries to minimize `guilty' verdicts for innocent people (= Type I errors), at the expense of some `not guilty' verdicts for guilty people (= Type II errors).} %Type II error 1/5 of the time (if the null is false), but a Type I error only 1/20 or 1/100 of the time (if the null is true).  
+However, the choice to minimize Type I error at the expense of power is essentially tradition, and depending on your research questions it may make more sense to use a method which prioritizes power. 
+
+For example, in any study where you want to argue \textbf{for} the null, you want to prioritize power, given that null results are only interpretable if power is high. \citet{vasishth2016statistical} discuss
+%discusses
+this point for psycholinguistics examples, and a nice example from phonetics is 
+\citet{warner2006orthographic}, who examine `incomplete neutralization' in Dutch, and 
+%a language where they 
+argue that neutralization is in fact complete. Their study has high power ($>$0.8) to detect a very small voiced/voiceless difference ($<$3.5 msec); they also do not find any significant voiced/voiceless difference for other acoustic cues.
+%(= several statistical analysis). 
+%% Cut - Michaela suggestion, haven't covered MC yet.
+%%Their argument is actually bolstered by their analysis choice to \textbf{not} correct for multiple comparisons---which maximizes the power to find any difference that does exist.
+
+% The tension between Type I error and Type II error when choosing between possible statistical tools will come up repeatedly in this book.  
+
+% 
+% 
+% - It is conventional to fix $\alpha$, say $\alpha = 0.05$.  Different tests will then have different $\beta$, and thus different *power*.  
+% 
+% - For example, 
+% 
+% % When should you use parametric versus non-parametric hypothesis tests, more generally? It depends on what your data looks like, and how much you weight the risk of missing a true effect ( \emph{Type II error}, which is one minus \emph{power}) versus the risk of detecting a spurious effect (\emph{Type I error}).If you have a choice between a parametric and non-parametric test (such as \(t\)-tests and Wilcoxon tests):
+% 
+% That said:
+% * Some methods are just better than others, e.g.,  one has higher power than the other with little change in Type I error.
+% 
+% * This all refers to data *analysis*.  The best way to raise power is to do a higher-powered study (REFS).
+
+% 
+% \begin{boxedtext}{}
+% \label{box:type-i-ii-trade-off}
+% 
+% - Because of this trade-off, \textbf{choosing between different analysis methods often means choosing how much you care about Type I versus Type II errors}. This point cannot be emphasized enough---it is a primary reason there is usually not a single `right' way to analyze data (see Box~\ref{box:type-i-ii-trade-off}).  When thinking through different analysis options (which are valid for your data), the question should usually not be "which is right or wrong?", but "what do they mean for different kinds of errors, and what do I care about?" % This theme will come up a lot, and understanding it can save you a lot of grief. 
+% 
+% - Can think of the trade-off as "desired relative seriousness" of alpha and beta (Kline 2013) — which will depend on your RQs, and should be discussed.  (In practice, even if you work with a fixed $\alpha$, the trade-off applies via which method you choose to use.)
+% \end{boxedtext}
+
+
+\subsection{Multiple comparisons}
+\label{sec:multiple-comparisons}
+
+One important place the conservativity/power trade-off comes into play is when correcting for multiple comparisons: the issue that the more hypothesis tests you conduct, the less meaningful the $p$-value for each test is.
+% moved up
+% \footnote{We assume you have previous exposure to multiple comparisons and at least one procedure to correct for them (probably Bonferroni), which are covered in most introductory applied statistics texts (e.g.,\ \citealp[][\S14.5]{NavarroOnline}; \citealp[][\S10.5]{field2012discovering}).}
+%The \emph{multiple comparison problem} refers to the issue that the more hypothesis tests you conduct, the less meaningful the $p$-value for each test is.   
+
+To see why, recall that the significance level $\alpha$ is set by deciding our level of tolerance for Type I errors. This interpretation ($\alpha = 0.05$ means ``5\% chance of falsely rejecting the null'') assumes that we are carrying out just one hypothesis test.  If we carry out multiple hypothesis tests, this interpretation no longer makes sense: we are 
+%a researcher will become 
+more and more likely to find at least one significant result---even though the null is (always) true.  Intuitively, this is why `data dredging' works: the more plots you make of two things you have measured, the more likely one of them will look like there is a relationship.
+
+To quantify this intuition, consider the \emph{family-wise error rate} (FWER), the probability of making at least one Type I error for a family of $k$ tests. If the results of the $k$ tests were independent, then:
+$$
+FWER = 1 - (1- \alpha)^k
+$$
+Figure~\ref{fig:fwer-ex} shows FWER for $k$ tests for common significance levels ($\alpha = 0.05$, $0.01$, $0.005$).  For example, when $\alpha = 0.05$, FWER is 9.7\% for 2 tests, 23\% for 5 tests, and 97\% for 50 tests.
+%so on (Figure~\ref{fig:fwer-ex}). 
+% Redundant:
+%Thus, a researcher performing more tests is more and more likely to find at least one significant result---even though the null is (always) true.  
+
+<<fwer-ex, echo=FALSE, out.width='60%', fig.width=default_fig.width*.6/default_out.width, fig.cap="Family-wise error rate for $k$ independent hypothesis tests with significance level $\\alpha$. $x$/$y$-axes are square root/log-transformed.">>=
+crossing(alpha = c(0.005, 0.01, 0.05), k = 1:75) %>%
+  mutate(fwer = (1 - (1 - alpha)^k)) %>%
+  ggplot(aes(x = k, y = fwer)) +
+  geom_line(aes(color = factor(alpha)), size=1) +
+  scale_y_continuous(breaks = seq(0, 1.0, by = 0.1), trans = "sqrt", labels = scales::percent) +
+  scale_x_log10() +
+  annotation_logticks(sides = "b") +
+  xlab("Number of tests (k)") +
+  ylab("Family-wise error rate") + 
+  scale_color_grey() +
+  labs(color=bquote(alpha))
+ @
+ 
+ 
+%The \emph{false discovery rate} (FDR) is the proportion of signifcant tests which are in fact Type I errors.  FDR is the same as FWER when all $k$ null hypotheses are true, but lower otherwise.  
+
+Different multiple comparison procedures attempt to hold FWER (or another metric, such as \emph{false discovery rate}---the proportion of significant test which are in fact Type I errors) at a specified level ($\alpha$, e.g., 0.05) when conducting many tests, by `correcting' the $p$-value for each individual test.
+%(Or equivalently, adjusting $\alpha$ for each test.)  
+
+The simplest option is just \emph{no correction}---use the original $p$-value.\footnote{For example, 
+%is actually common---
+we rarely correct all the $p$-values reported for unrelated analyses in a paper.}
+%for example. 
+%
+  The most common actual `multiple comparison procedure'  is the \emph{Bonferroni method}, which just multiples the $p$-value for each test by $k$. The Bonferroni method is the most conservative multiple comparison procedure---FWER is always below $\alpha$, with no assumptions about the data---but it has very low power: in most situations, at least one test will fail to detect a difference that actually exists.  `No correction' is obviously the least conservative procedure possible---but it also has the highest power. 
+
+There are many other multiple comparison methods, which trade off between these options (conservativity vs. power), making different assumptions about the data, and controlling either FWER or another metric (such as \emph{false discovery rate}).  Some  common methods are:
+%Considering just FWER, common procedures to control FWER are:
+\begin{itemize}
+%\item No correction 
+%\item The \emph{Bonferroni method} (controls FWER, no assumptions)
+\item The \emph{Holm-Bonferroni method}: adjusts lower $p$-values more severely than higher ones (also controls FWER, without assumptions).
+%, also without assumptions about the data.
+\item The \emph{Tukey HSD} method (controls FWER): used in the (common) special case of \emph{pairwise comparisons}---testing for a difference between each pair of $m$ groups (so, $k = m(m-1)/2$), using modified $t$-tests.
+\item The \emph{Benjamini-Hochberg method} (a.k.a.\ \emph{FDR} method): controls false discovery rate, but makes assumptions about independence of tests.
+\end{itemize}
+%The \emph{Benjamini-Hochberg method} (a.k.a. \emph{FDR} method) controls FDR, but makes assumptions about independence of tests.   There are many (many) other multiple comparison procedures.
+
+Methods minimizing false discovery rate (such as the FDR method) tend to have higher power than FWER methods, but are less conservative. This may be why the convention in cognitive/behavioral sciences (which focus on Type I error) is to use Bonferroni corrections, and Tukey tests for pairwise comparisons.  But it should be kept in mind that both methods are very conservative,
+and the Bonferroni correction should arguably never be used (Section~\ref{sec:mult-comp-discussion}).
+
+\subsubsection{Example}
+\label{sec:mult-comp-ex}
+
+One application where correcting for multiple comparisons is common is examining \emph{individual differences}---what effect different people in the same study show.  In this example we look for individual differences in the effect of voicing in the \ttt{neutralization} data by carrying out a $t$-test for each subject, correcting for multiple comparisons in different ways. 
+
+Figure~\ref{fig:mult-comp-1} (left), which repeats  Figure~\ref{fig:mult-comp-0} from above, summarizes the empirical voiced/voiceless duration difference for each subject. If we went from this plot alone, we would conclude that 7 subjects have non-zero effects (those where the errorbar does not overlap zero). But how would this conclusion change if we correct for multiple comparisons?
+% 
+% 
+% the approximate (95\% confidence interval)
+% Comparing to a empirical plot showing approximate 95\% confidence intervals for each subject , we see that the \Sexpr{sum(round(p_df$p, 4)<0.05)} subjects for which 
+
+Within each speaker, the data are organized into voiced/voiceless pairs by \ttt{item\_pair} (see Section~\ref{sec:neutralization-data}).
+%for example, item 9 is the nonce words `pruge'/`pruke').
+We first organize the data so each subject/item pair is in one row, with one column each for \ttt{vowel\_dur} for \ttt{voicing}=\tsc{voiced} and \tsc{voiceless}:
+
+<<>>=
+neut_paired <- neutralization %>%
+  select(subject, item_pair, vowel_dur, voicing) %>%
+  spread(voicing, vowel_dur) %>%
+  # Remove rows with NA for voiced or voiceless
+  remove_missing()
+@
+
+To get the uncorrected $p$-value, we then apply a paired $t$-test ($\alpha = 0.05$) to the voiced/voiceless pairs from each subject:
+%to test whether their voiced/voiceless differences differ from zero.
+% (see Box XX).
+% 
+% - Now apply a paired $t$-test to data for each subject---tests whether their voiced-voiceless differences differ from 0, across items.  
+<<p-calc>>=
+p_df <- neut_paired %>%
+  nest(data = c(item_pair, voiceless, voiced)) %>%
+  mutate(
+    test = map(data,
+      ~ t.test(.x$voiced, .x$voiceless, data = .x, paired = TRUE)
+    ),
+    ## Extract p-value
+    p = map_dbl(test, "p.value")
+  ) %>%
+  select(-test, -data) %>%
+  unnest(p)
+ @
+ This code uses functions from purrr: \ttt{nest()}  to split up the dataframe by subject, \ttt{map()} to apply a function to each subset, then \ttt{unnest()} to put the dataframe back together.\footnote{This kind of `nest-map-unnest' workflow is  useful, and
+ %or `split-apply-combine' workflow is useful, and with
+ %and 
+ made easier by 
+ tidyverse functionality \citep[][chap.~25]{grolemund2016datascience}.}
+The resulting $p$-values are:
+<<output.lines=5>>=
+round(p_df$p, 4)
+@
+
+We now correct these $p$-values for multiple comparisons using the Bonferroni, Holm, and FDR methods, using the \ttt{p.adjust} function:
+
+<<depends.on=c('p-calc')>>=
+p_df <- p_df %>% mutate(
+  ## No correction
+  none = p,
+  bonferroni = p.adjust(p, method = "bonferroni"),
+  holm = p.adjust(p, method = "holm"),
+  fdr = p.adjust(p, method = "fdr")
+)
+@
+
+<<mult-comp-1, echo=FALSE, out.width="49%", fig.width=default_fig.width*.49/default_out.width, fig.cap="Left: summary of voiced-voiceless duration differences for each of the 16 speakers for the \\ttt{neutralization} data. Points/errorbars are means $\\pm$ 2 standard errors. Right: $p$-values for one-sample $t$-tests (on square root-scale) examining the effect of stop voicing on vowel duration within each subject.  Subjects are ordered by $p$-value. $p$-values shown are uncorrected (`none') or corrected using the Bonferroni, Holm-Bonferroni, or FDR method. Note that some points overlap, for subjects where different calculation methods give similar $p$-values.  Dotted line is significance level ($\\alpha = 0.05$).">>=
+neut_paired %>%
+  mutate(diff = voiced - voiceless) %>%
+  ggplot(aes(x = factor(subject), y = diff)) +
+  stat_summary(fun.data = mean_se, fun.args = list(mult = 2)) +
+  geom_hline(aes(yintercept = 0), lty = 2) +
+  xlab("Subject") +
+  ylab("Voiced-voiceless\nduration difference") +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5))
+
+p_df %>%
+  select(-p) %>%
+  gather(method, p, -subject) %>%
+  ggplot(aes(x = reorder(subject,p), y = p)) +
+  geom_point(aes( shape=method)) +
+  geom_hline(aes(yintercept = 0.05), lty = 2) +
+  geom_line(aes(group=method), size=0.1) +
+  xlab("Subject") +
+  ylab("p-value") +
+  scale_y_continuous(trans = "sqrt", breaks = c(0, 0.01, 0.05, 0.25, 0.5, 0.75, 1.0)) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5),
+        legend.position = "bottom") +
+  guides(shape=guide_legend(nrow=2))
+@
+
+Figure~\ref{fig:mult-comp-1} (right) plots these $p$-values.   
+First, note how for each subject, $p_{FDR} < p_{holm} \le p_{bonferroni}$. This is consistent with the Bonferroni correction being the most conservative and the FDR comparison the least conservative.  Second, we see that the conclusion we draw about ``how many speakers show incomplete neutralization?'' changes, depending on whether we correct for multiple comparisons, and to a lesser extent how we do so:
+\begin{itemize}
+\item $\alpha = 0.05$ significance level: \Sexpr{sum(round(p_df$p, 4)<0.05)} subjects using uncorrected $p$-values ($p<0.05$ for the 7  subjects whose errorbars don't overlap zero); \Sexpr{sum(round(p_df$holm, 4)<0.05)} subjects using corrected $p$-values (any method).
+\item $\alpha = 0.01$ significance level: \Sexpr{sum(round(p_df$p, 4)<0.01)} subjects using uncorrected $p$-values, versus 2 subjects using FDR or 1 subject using Holm or Bonferroni.
+\end{itemize}
+
+
+\subsubsection{Discussion}
+\label{sec:mult-comp-discussion}
+
+As the example showed, either lowering $\alpha$ or adjusting for multiple comparisons using a more conservative method will lead to fewer significant results (more possible Type II errors) but also to fewer spurious results (fewer possible Type I errors).  The point here is not which method is `right',
+%(we rarely know if the null is true---in this example, for each subject), 
+but that they trade off in conservativity versus power. 
+
+That said, some practical advice can be given:
+\begin{itemize}
+\item The minimally-conservative method of \emph{not} correcting for multiple comparisons, especially when performing many (say $>5$) conceptually-related hypothesis tests, is almost never a good idea.\footnote{An exception is when `proving the null' is of interest.  \citet{warner2006orthographic} do not correct for multiple comparisons  in their Dutch incomplete neutralization study, which maximizes  power to find any voiced/voiceless difference that does exist, and strengthens their argument for `complete neutralization'.
+}  You will be very prone to spurious findings.
+\item The maximally-conservative method, Bonferroni, is never a good idea, because the Holm-Bonferroni method always has higher power, without increasing Type I error (\citealp{aickin1996adjusting}; see also \ttt{?p.adjust.methods} in R).
+\item If the conclusions you reach about a research question depend greatly on which multiple comparison method is used, they are shaky.
+\end{itemize}
+
+
+
+%#--using the then examine them relative to an $\alpha = 0.05$ threshold .
+%>% select(-none) %>% gather(method, p, -subject)
+% 
+% 
+% - If Type I and Type II errors trade off, means that different methods for the same data will give different $p$-values.  Intuitively, `conservative' tests give $p$-values which are too high, and `anti-conservative' tests give $p$-values which are too low.  (This is confusing to think about, because we are now discussing different tests with the same $\alpha$---but the *real* Type I error rate of each test is not $\alpha$.)
+% 
+% Formally, if a test is carried out with significance level $\alpha$:
+% * Conservative: $P(p \le \alpha | H_0) < \alpha$
+% * Anti-conservative (or `liberal'): $P(p \le \alpha | H_0) > \alpha$
+% 
+
+
+% - Consider just the case where each method leads to a binary outcome, so we end up with the table above.  Like different hypothesis tests ; in later chapters different model selection procedures.
+% 
+% - The discussion above assumed that alpha is fixed, and see how power changes as n/etc. In practice, for data already collected, the choice is different analysis methods---and in this case, Type I and Type II error generally trade off.
+
+
+% - Another example: correcting for multiple comparisons.    Null hypothesis: all comparisons are 0.  Two possibilities: just conduct a bunch of t-tests with alpha = 0.05, or do so having first lowered alpha to account for these many tests. If the null were actually true, we’d make an error more than 5\% of the time in option 1. If the null isn’t true, we will make an error more often using Option 2.   Different multiple comparison methods trade off between these options. (And the options are actually more compliated, because FWER isn't the only thing we could minimize.)  
+
+% - If Type I and Type II errors trade off, means that different methods for the same data will give different $p$-values.  Intuitively, `conservative' tests give $p$-values which are too high, and `anti-conservative' tests give $p$-values which are too low.  (This is confusing to think about, because we are now discussing different tests with the same $\alpha$---but the *real* Type I error rate of each test is not $\alpha$.)
+
+% % Formally, if a test is carried out with significance level $\alpha$:
+% % * Conservative: $P(p \le \alpha | H_0) < \alpha$
+% % * Anti-conservative (or `liberal'): $P(p \le \alpha | H_0) > \alpha$
+% % 
+% % Different methods trade off in conservativity and power: more conservative (good) tends to mean lower power (bad), and vice versa.  For example, Bonferroni corrections for MC are highly conservative but have low power; not correcting at all has high power but is highly anti-conservative.
+% 
+% 
+% - So when thinking through different analysis options, the Q is often not "which is right or wrong?", but "what do they mean for different kinds of errors, and what do I care about?"  This theme will come up a lot, and understanding it can save you a lot of grief.
+% 
+% - Example,discussed more in XX, but worth mentioning here — random-intercepts only mixed model versus with random slopes. The more terms added, the less likely we are to detect a group effect *if one exists* (lower power); the fewer terms added, the more likely we are to erroneously detect a group effect *if one doesn’t exist* (anti-conservative).
+
+
+
+
+% Parametric tests are commonly said to be more powerful than their non-parametric equivalents (e.g.,\ $t$-test vs.\ Wilcoxon test)---though in reality this is only true if the data is normally distributed.  In general, the more assumptions a test makes, the higher its power (when these assumptions are met).  
+% 
+% When should you use parametric versus non-parametric hypothesis tests, more generally? It depends on what your data looks like, and how much you weight the risk of missing a true effect ( \emph{Type II error}, which is one minus \emph{power}) versus the risk of detecting a spurious effect (\emph{Type I error}).If you have a choice between a parametric and non-parametric test (such as \(t\)-tests and Wilcoxon tests):
+% 
+% \begin{itemize}
+% \item
+%   The parametric test will (often) be more powerful if its assumptions are met (lower Type II error), and potentially invalid otherwise---susceptible to detecting spurious effects (higher Type I error)\footnote{Using an ``invalid'' test could also lead to Type II errors, but we emphasize Type I errors for this discussion.}
+% \item
+%   The non-parametric test potentially has less power to detect effects that in fact exist (higher Type II error), but requires fewer assumptions about the data, thus minimizing the risk of detecting spurious effects (lower Type I error)
+% \end{itemize}
+% 
+% The convention in cognitive/behavioral sciences is to prioritize minimizing Type I error over Type II error, which would suggest using the non-parametric test unless you are sure the parametric test is appropriate. However, the choice to minimize Type I error at the expense of power is mostly just tradition, and depending on your research questions it may make more sense to prioritize higher power (assuming the assumptions of the parametric test are met!). This tension between Type I error and Type II error when choosing between possible statistical tools---and to what extent currently standard methods are due to convention versus principled reasons---is returned to below. 
+
+
+% 
+% Now, let's not assume alpha is fixed.  If we lower alpha, we are less likely to make a Type I error (in the long run!), by definition.   But by doing this we also lower power, as in Example XX above---so we are more likely to miss true effects.  We can raise alpha, which raises power---but now we are 
+% 
+% - In contrast to $\alpha$, the $p$-value is calculated from the sample. 
+
+
+
+% 
+% 
+% 
+% For a given statistical test, power is a function of these four quantities, and ‘power calculations’ consist of determining power given values of the four quantities, or determining the necessary value of one quantity to achieve a given power level. Typically power calculations for research planning focus on sample size, because other determinants of power are less accessible (e.g., true effect size is determined by the phenomenon itself).
+
+
+% 
+% Many researchers would conclude that if an effect is `significant' (e.g.,\ $p=0.001$), they are unlikely to have made a Type I error, and the result is reliable.  This is not the whole story, for two reasons. First, we will never know whether a Type I error occurred---whenever we apply a statistical procedure, any of the four outcomes are possible, regardless of the outcome of the statistical proedure (e.g.,\ if $p = 00001$).  Second, Type I error is only one kind of error we can make.
+% 
+
+
+ 
+ 
+ 
+\section{Error in effect size: Type M and Type S error}
+\label{sec:type-m-s-error}
+
+Types I and II error are defined with respect to a binary decision---is the parameter null or not?   We now discuss errors in (unstandardized) effect size---the actual value of the parameter we're estimating.   
+
+\subsection{Bias}
+\label{sec:bias-def}
+
+First, some terminology we'll need going forward:  Recall that  a statistical estimator is \emph{unbiased} if on average (across many samples) it gives an estimate that is the same as the population value (Section~\ref{sec:sdsm}). The estimator is \emph{biased} otherwise: too high or too low, or
+%(biased \emph{upwards}/\emph{downwards}), or 
+towards or away from zero (\emph{shrunk}/\emph{inflated}).  The \emph{variance} of an estimator measures how `spread out' the estimates are, across many samples. (For example, the width of the distributions in Figure~\ref{fig:sdsm-1} is the variance of the sample mean.)  \emph{Precision} is the inverse of variance (low variance$\Rightarrow$high precision).
+
+We try to always use estimators that are unbiased, but this property typically only holds in ideal settings (large sample size, model assumptions met), and breaks down for small enough sample size or if certain model assumptions are violated.  A simple example we have already seen (Section~\ref{sec:standard-error}) is using $\sqrt{n-1}$ in the denominator to estimate a population's standard deviation from a sample. If we instead use $\sqrt{n}$, the estimate is biased downwards.  
+
+In analyzing data we usually implicitly assume that our estimators are close enough to unbiased, so that on average,
+%our results---
+the estimate we make of a parameter of interest is correct.
+%---are correct. 
+Because bias is defined as an average over many samples, this assumption only makes sense if we pay equal attention to all results, reporting whatever the statistical model says.
+%---whatever the statistical model says, we report it. 
+
+%FUTURE-transition 
+% Still, when analyzing data we can usually implicitly assume that our estimators are unbiased, so if we gave equal weight to all results, we would on average make correct estimates. 
+
+\subsection{Types M and S error}
+%\label{sec:type-m-s-error}
+
+% 
+% Types I and II error are about a binary decision, typically ``is 
+% 
+% - Type I and II error are about a binary decision: is the parameter zero or not.
+% 
+% - What about errors in effect size?  In general we always use `unbiased estimators'---discussed in Ch.\ 2.  So *on average*, they give an estimate that is the same as the true value.
+% 
+% - Such properties typically break down for low enough sample size, or if certain model assumptions are violated; in this case the estimator is "biased".  Simple example: estimating SD from a sample with n in the denominator---biased downwards (estimate too low), for high sample size OK.  (We just need this terminology for later chapters.) "Inflated" estimate means "further from zero".
+
+
+However, in practice research in cognitive and behavioral science doesn't give equal weight to all results---in publications it is common to only discuss  `significant' effects ($p < \alpha$), and interpret them based on their sign and (sometimes) magnitude.  Non-significant results are often not discussed, or (worse) not published at all.
+Whatever the other consequences of this practice,\footnote{Reporting only significant results is highly problematic. See \citet{vasishth2018statistical} for discussion for 
+%negative consequences of the `statistical significance filter' for 
+(psycho)linguistics in particular.} the implicit assumption is that the significant results are reliable---but how accurate are the parameter estimates, in reality?
+
+
+
+
+Let $\beta_x$ denote the true size of an effect of interest, and
+$\hat{\beta}_x$ the estimated effect size when an experiment is done
+to estimate it.  Because $\hat{\beta}_x$ is a random variable, which
+will be different each time the experiment is run, the estimated
+effect size can be incorrect relative to the true effect size, in
+either magnitude or sign.  \cite{gelman2014beyond} define two
+corresponding measures of error of the estimated effect size (in \textbf{M}agnitude or \textbf{S}ign), across
+different replications of the same experiment:
+%where the true effect size is
+%$\beta_x$: %The estimated effect size can be wrong in magnitude, or in sign.
+\begin{itemize}
+\item The \emph{Type M error} is the value of $|\hat{\beta}_x/\beta_x|$ in one replication.
+\item The \emph{exaggeration ratio} is the average Type M error across many  replications.
+  %(or more descriptively, the exaggeration ratio)
+%   is the expected value of $|\hat{\beta}_x/\beta_x|$: the extent by which the
+% magnitude of the effect is exaggerated.
+\item The \emph{Type S error} is the probability that the estimated effect
+has the wrong sign (sign($\hat{\beta}_x$) $\ne$ sign($\beta_x$)).
+\end{itemize}
+
+These quantities are all measures of bias, typically defined as conditional on significance: How biased would the estimate's magnitude be, and how often would its sign be wrong, \textbf{if only significant results are considered}?  The idea is to quantify two kinds of error made in realistic data analysis, where only results which are made ``with confidence'' are taken seriously \citep{gelman2000type}.\footnote{Note that statistical significance is only one way to define which claims are made `with confidence'; the general points hold for other criteria (e.g.,\ Bayes factors or likelihood ratios).}  
+
+
+Like power, calculating Type M and S error requires assuming a true effect size (and degree of variability), and the concepts are closely related.  In general (for unbiased estimators) Type M and Type S error decrease as power increases, and 
+%As a rule, 
+Type M error increases faster than Type S error as power decreases.
+
+%As demonstrated by \cite{gelman2014beyond,lu2019note}, 
+When power is low, Type M and S error can be surprisingly high---even for statistically significant results \citep{gelman2014beyond,lu2019note}.
+%\citep{gelman2014beyond,button2013power,ioannidis2008most}.
+%Conversely, when power is high, Type M and S error will remain low. 
+The existence of Type M and Type S errors means that it is not always the case that significant findings are `correct', in the sense of providing accurate estimates of the
+%sign and/or magnitude of the 
+effect of interest.  
+
+We illustrate these points in an example using the \ttt{neutralization} data, using simulation to calculate Type M and S errors for $t$-tests, assuming different true effect sizes.\footnote{Because the points we will make are primarily conceptual,
+%are more conceptual than practical, so 
+we do not go into how to actually calculate Type M and S error.  They can be calculated for simple cases using calculators (e.g.,\ $t$-tests: \citealp{gelman2014beyond}) or via simulation for more complex designs \citep[e.g.,][]{kirby2018mixed}.}
+% 
+% 
+% - Very common throughout cog/behavioral sciences to only discuss, or even only report, significant effects.  The implicit assumption is that these results are reliable.  but how accurate are the parameter estimates (= effect sizes)?  (now introduce type M and S errors using Jphon part 1.)
+
+% Show this point through an example using simulation.  (text from jphon -- there is no calculator, so in general have to do by simulation if at all)
+
+
+\begin{boxedtext}{Broader context: ``True effect size''?}
+\label{box:true-effect-size}
+
+The calculations behind `design analysis' (power, Type M and S error) depend on specifying a range of `true' effect sizes to consider.  This is arguably the most difficult part of design analysis---or power analyses for study planning, for that matter---because the true effect size is unknown.
+%(that's why you're doing a study in the first place!). 
+You can't just use your observed effect size, by the same logic as why `observed power' is useless (Box~\ref{box:observed-power}).
+
+However, delimiting a range of plausible effect sizes of the phenomenon is usually possible. Ways to do this include a meta-analysis or literature review of previous studies,
+%of the phenomena,
+if a literature exists; if not, 
+%as is probably the usual case for linguistic data: 
+computational modeling, theoretical considerations, soliciting expert opinions, or reasoning based on studies of related phenomena.  \citet{gelman2014beyond} \citet{nickerson2000null} (Ch.\ 12), and \citet{vasishth2016statistical} discuss these options with some practical examples from different fields (social sciences, psychology, linguistics).
+%Gelman \& Carlin (7--8) and Vasishth \& Nicenboim 
+%discuss these options with some practical examples; 
+Section~\ref{sec:effect-size-1} (above) and \citet{kirby2018mixed} provide an example for German incomplete neutralization in particular.
+
+% - Calculations of power, Type M, Type S error all assume we know plausible "true effect size" to try.  but that's a big idealization...
+% 
+% - adapt text on this: picking a reasonable range of sizes is the hardest part of "design analysis"; here are some commonly suggested ways to do it. (paste in from jphon, adapt from vasishth and nicenboim)
+\end{boxedtext}
+
+
+\paragraph{Example}
+
+We assume the same setup as in the power example in Section~\ref{sec:power-ex}---two-sample $t$-test to detect a \tsc{voiced}/\tsc{voiceless} difference, $\sigma$ fixed at 45 msec, etc.---but now we examine how the exaggeration ratio and Type S error vary as a function of sample size $n$ (ranging from 25--500 msec) and (true) effect size $\Delta$ (of 5, 10, or 30 msec).
+
+We calculate Type M and Type S error by simulation (code shown in source file only): for a given $\Delta$ and $n$, we draw normally distributed data from two groups many times, perform a $t$-test for each draw, and calculate the exaggeration ratio and Type S error using the estimated effect sizes from draws where the $t$-test was significant.
+% \begin{itemize}
+% \item Many times (5000):
+% %The following code computes Type M and Type S error by simulation.  
+% draw $n$ observations from two groups, perform a two-sample $t$-test, and if $p<0.05$ keep the estimate $\hat{\beta}_x$
+% \item Use the stored estimates and $\beta_x$ to compute ER and Type S error.
+% \end{itemize}
+% 
+% - Same logic as our power example above: consider three *true* effect sizes, a range of sample sizes; focus on `small' sample size (one subject in neutralization) and `large' (all neutralization data).
+% 
+% - In each case, can proceed by simulation (Section XX): do two-sample $t$-test, if signficant keep effect size.
+% 
+<<type_ms_calc, echo=FALSE>>=
+f_name <- "type_ms_df.feather"
+f_path <- paste("objects/", f_name, sep = "")
+do_sim <- !file.exists(f_path)
+
+sims_t_test_eff_size <- function(mu_1, mu_2, sig_1, sig_2, n_1, n_2, alpha = 0.05) {
+  x1 <- rnorm(n = n_1, mean = mu_1, sd = sig_1)
+  x2 <- rnorm(n = n_2, mean = mu_2, sd = sig_2)
+
+  my_test <- t.test(x1, x2)
+
+  estimate <- ifelse(my_test$p.value < alpha, as.numeric(my_test$estimate[2] - my_test$estimate[1]), NA)
+  return(estimate)
+}
+
+## so we can run it in a tidy workflow
+sims_t_test_eff_size <- Vectorize(sims_t_test_eff_size)
+
+n_sim <- 5000
+
+## real values
+
+mu_1 <- 152
+
+## these things actually vary
+mu_diff_vals <- c(5, 10, 30)
+sig_vals <- c(45)
+n_vals <- seq(25, 500, by = 25)
+alpha_vals <- c(0.05)
+
+
+df_1 <- crossing(
+  .iter = 1:n_sim, mu_diff = mu_diff_vals,
+  sig = sig_vals,
+  n_samp = n_vals, alpha = alpha_vals
+)
+
+
+if (do_sim) {
+  ## add effect sizes
+  df_1 <- df_1 %>% mutate(
+    decision = sims_t_test_eff_size(
+      mu_1 = mu_1,
+      mu_2 = mu_1 + mu_diff,
+      sig_1 = sig,
+      sig_2 = sig,
+      n_1 = n_samp,
+      n_2 = n_samp,
+      alpha = alpha
+    )
+  )
+  write_feather(df_1, path = f_path)
+} else {
+  df_1 <- read_feather(path = f_path)
+}
+ @
+ 
+\begin{figure}
+<<echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width>>=
+df_2 <- df_1 %>%
+  filter(!is.na(decision)) %>%
+  group_by(mu_diff, sig, n_samp, alpha) %>%
+  summarise(typeM = mean(abs(decision / mu_diff)), typeS = sum(sign(decision) != sign(mu_diff)) / n())
+
+df_2 %>% ggplot(aes(x = n_samp, y = typeM)) +
+  geom_line(aes(color = factor(mu_diff)), size = 1) +
+  xlab("Sample size") +
+  ylab("Exaggeration ratio") +
+  scale_y_continuous(breaks=c(1, 2, 4, 6)) +
+  scale_color_grey(guide = guide_legend(title = "True effect\nsize (msec)"),  start=0.8, end=0.2) +
+  theme(legend.position = "none")
+
+df_2 %>% ggplot(aes(x = n_samp, y = typeS)) +
+  geom_line(aes(color = factor(mu_diff)), size = 1) +
+  xlab("Sample size") +
+  ylab("Type S error") +
+  scale_color_grey(guide = guide_legend(title = "True effect\nsize (msec)"), start=0.8, end=0.2 ) +
+  theme(legend.position = c(0.7, 0.7))
+@
+\caption{Exaggeration ratio (left) and Type S error (right) for a two-sample $t$-test as true effect size (difference in means) and sample size are varied, with variability ($\sigma = 45$) and significance level ($\alpha = 0.05$) held fixed.}
+\label{fig:type_ms_plot_1}
+\end{figure}
+
+<<type_ms_plot_2, echo=FALSE, fig.asp=.5, out.width="90%", fig.width=default_fig.width*.9/default_out.width, fig.cap="Distribution of estimated effect sizes (difference between sample means: violin plots) for 5000 simulations of $n$ observations from two normal distributions, with means separated by a true effect size ($x$-axis: 5, 10, 30 msec).  Inset numbers show power for a two-sample $t$-test in each case.">>=
+get_power <- function(...) {
+  power.t.test(...)$power
+}
+
+power_df <- df_1 %>%
+  filter(n_samp %in% c(25, 375) & .iter == 1) %>%
+  mutate(power = round(get_power(delta = mu_diff, sd = sig, n = n_samp), 2)) %>%
+  mutate(n_samp_2 = dplyr::recode(n_samp, `25` = "n: 25", `375` = "n: 375"))
+
+df_1 <- df_1 %>% mutate(n_samp_2 = dplyr::recode(n_samp, `25` = "n: 25", `375` = "n: 375"))
+
+## plot just for the low and high power examples
+df_1 %>%
+  filter(n_samp %in% c(25, 375) & !is.na(decision)) %>%
+  ggplot(aes(x = mu_diff, y = decision)) +
+  geom_violin(aes(group = mu_diff, fill = factor(n_samp))) +
+  geom_abline(lty = 2) +
+  facet_wrap(~n_samp_2) +
+  scale_fill_grey() + 
+  xlab("True effect size (msec)") +
+  ylab("Estimated effect size (msec)") +
+  geom_text(aes(x = mu_diff, y = -10, label = power), data = power_df) +
+  theme(legend.position = "none")
+@
+
+Figure~\ref{fig:type_ms_plot_1} shows the exaggeration ratio
+%(average Type M error) 
+and Type S error as a function of true effect size and sample size. The general pattern is as expected: as power increases (via larger $n$ or $\Delta$), the effect's magnitude is less exaggerated and less likely to have the wrong sign, and the Type S error decreases faster than the exaggeration ratio.
+% 
+% %above: 
+% \begin{itemize}
+% \item %The higher power is (via larger $n$ or $\Delta$), 
+% The effect's magnitude is less exaggerated and less likely to have the wrong sign.
+% %---on average.
+% %less exaggerated the effect's magnitude is and the less likely it has the wrong sign---on average.  
+% \item The Type S error decreases faster than the exaggeration ratio.
+% %as power increases.
+% \end{itemize}
+
+%% FUTURE: change figure to be even more like Fig 8 of V&N, including adding Cohen's d on y-axis
+To make this more concrete, Figure~\ref{fig:type_ms_plot_2}  shows the distribution of estimated effect sizes (for individual draws) in the same illustrative cases as in the power example: complete/incomplete/no neutralization effect sizes ($d=5$, 10, 30), and small and large sample sizes ($n=25$, 375).\footnote{This figure is inspired by Figure 8 of \citealp{vasishth2016statistical}.}
+%corresponding to one subject/all subjects in the \ttt{neutralization} dataset. 
+The distributions let us think more easily about what could happen in an {individual} study (as opposed to on average). It is useful to think in terms of the power of different cases, which ranges from \Sexpr{min(power_df$power)} to \Sexpr{max(power_df$power)}:
+
+\paragraph{High power}
+For high power ($>$0.8), the estimate for a significant result is guaranteed to have the right sign, and will likely have a magnitude near its true value---bias is low and precision is high.  For example, in a study of incomplete neutralization with $n=375$ (assuming $\Delta = 10$ msec), where power is \Sexpr{filter(power_df, n_samp==375 & mu_diff==10)$power}, a significant result will give an estimate in the right direction (\tsc{voiced}$>$\tsc{voiceless}), and an estimate precise to about 5 msec.\footnote{Even
+%Although high in absolute terms, even 
+this precision may not be enough to differentiate between
+%different
+theories. Recall that $\Delta = 5$ would mean `imperceptible', while $\Delta = 10$ would mean `in line with other incomplete neutralization effects'.}
+
+\paragraph{Medium power}
+ As power decreases (here, 0.33--0.64), the magnitude of the effect is increasingly likely to be positively biased, and precision decreases drastically, though the effect's sign is very likely to be correct.  For example, in a study of a non-neutralized contrast (assuming $\Delta = 30$ msec) with a small sample size ($n=25$), a significant result will give wildly differing estimates ($\sim$20--70 msec), which on average will be inflated from the true value by 
+ \Sexpr{round(100*filter(df_2, mu_diff==30 & n_samp==25)$typeM)-100}\%.
+
+\paragraph{Low power}
+For lower power (here, $<$0.2), significant effects will have greatly inflated magnitude, and sometimes the wrong sign---thus, high bias and low precision.  For example, consider the case of using a small sample per subject ($n=25$) to detect a contrast of $\Delta = 5$ or 10 msec.
+%msec or 10 msec.  
+Many subjects will give non-significant results (because power is low),  the estimates for subjects with significant results are {guaranteed} to be  greatly inflated (by a factor of $\sim$5--6 on average!), and there is a reasonable chance these significant effects will have the wrong sign (5--10\%).
+
+\subsection{Summary: Power, Type M/S errors, and design analysis}
+\label{sec:design-analysis}
+
+This example, and the one in 
+Section~\ref{sec:power-ex}, show the consequences of power and effect size errors in a concrete case: the effect of consonant voicing on vowel duration in the \ttt{neutralization} dataset.  The exact numbers (for power, Types M/S errors) are specific to this particular case, 
+%and will differ for another study depending on the design, etc.
+%degree of variability, etc.
+but the general points raised in both examples hold for interpreting any study (or for planning a new one):
+\begin{itemize}
+%\item Null results can be informative, if power is high
+\item When power is low, null results are uninformative, effect size estimates are imprecise, and significant results are virtually guaranteed to give an effect size inflated in magnitude and possibly with the wrong sign (the `winner's curse': \citealp{button2013power,ioannidis2008most})
+%\begin{itemize}
+%\item Null results are uninformative
+%\item Effect size estimates are imprecise
+%\item Significant results are virtually guaranteed to give an effect size inflated in magnitude and possibly with the wrong sign (the `winner's curse': \citealp{button2013power,ioannidis2008most})
+%\end{itemize}
+\item When power is high, null results are informative, effect size estimates are precise, and significant results give effects which are minimally biased and have the correct sign.
+%\begin{itemize}
+% \item 
+% Null results are informative
+% \item Effect size estimates are precise
+% \item Significant results give effects which are minimally biased and have the correct sign
+% \end{itemize}
+\end{itemize}
+
+In sum, in a high-powered study results give useful information regardless of the $p$-value.  In contrast, in a low-powered study neither the $p$-value nor effect size gives much useful information.
+
+% 
+% An important corollary, assuming our estimators are unbiased, is that 
+% \textbf{null results are still informative when power is high}---the estimated effect size will be minimally biased, and have the right sign.  (When power is low, null results have effect sizes which are deflated in magnitude.)  Thus,
+% \textbf{in a high-powered study results give useful information regardless of the $p$-value}.  In contrast, in a low-powered study neither the $p$-value nor effect size gives much useful information.
+
+These considerations can be used for \emph{design analysis} \citep{gelman2014beyond,kirby2018mixed}: using statistical tools to interpret the results of a study by reasoning about likely outcomes
+%(= parameter values) 
+if the study were replicated---which is generally what we are interested in (not the results of the study itself)---by considering a range of plausible effect sizes (Box~\ref{box:true-effect-size}).  Design analysis can  tell us what we can learn from a study with a given design and sample size about likely values of a parameter of interest---regardless of whether or not the parameter's estimate was `significant' in our study.
+%value of the parameter was statistically significant in our particular study.
+
+For example, consider the example in Section~\ref{sec:mult-comp-ex}, where we tested for the effect of \ttt{voicing} within individual subjects ($n \approx 25$), and found that about half of the subjects showed null effects, while others showed effects estimated at 11--22 msec. This kind of result is sometimes discussed in the phonetics literature as  evidence for individual differences: some subjects have an effect, some don't (in reality).  However, {if} in reality $\Delta =$ 5--12 msec  for all subjects (no individual differences), the pattern of results observed would be unsurprising.  Power is low--medium,
+%(its higher than figure suggests because one-sample tests), 
+resulting in the Type II errors (subjects with null results), while significant effects are biased upwards from the true value.
+%\footnote{Alternatively, using the reasoning about CIs rather than power for interpreting null results from XX: for all subjects with null results, the CIs are wide (overlapping 5 msec), so we can't conclude any subject has a `null' effect (defined as $\le$ 5 msec).  Note that this approach doesn't require us to actually calculate power.}
+But this result would also be unsurprising if individual differences did exist---say some subjects have $\Delta = 0$ and others have $\Delta$ = 5--12---so our results are just inconclusive as to whether individual differences exist.
+
+% This kind of design analysis is discussed in more detail by \citet{gelman2014beyond} (using psychology examples) and by \citet{kirby2018mixed} for the German incomplete neutralization case.
+%and \citet{vasishth2017statistical} using examples from phonetics.
+
+
+
+
+
+% Together we see:
+% 
+% - General pattern: 
+% 
+% - High power (around 0.85--1.0) => what we want (unbiased estimate, magnitude will be OK and sign will be right)
+% 
+% - As power decreases: signifcant effect is *guaranteed* to be inflated, because XX.  
+% 
+% - When power is low (say $<0.2$), signiifcant effects will have greatly inflated magnitude (2-6x in this example), and reasonable chance of the wrong sign (1--10\%).
+% 
+% While these exact numbers differ depending on the design/analysis method/data/etc., just like power, the general points about estiamted effect sizes will always hold:
+% -- When power is low, XX.
+% -- When power is high YY.
+% -- As long 
+
+
+
+
+
+
+% 
+% brainstorming:
+% 
+% - Spell out why this matters (maybe in a box? refer to vasishth et others points)
+% -- need to be circumspect even about significant results--depending on power (which is as a rule probably not high, in published work)
+% -- any significant effect is inflated
+% -- imporatnt to report both null and non-null effects; applying the "statistical significance filter" has bad consequences for science. (doesn't necessarily mean "report all effects" -- but the decision should be based on e.g., theoretical interest, or precision of estimate, not significance.)
+% 
+% low power:
+% -- null results uninterpretable
+% -- effect size estimates unreliable
+% 
+% high power:
+% -- null results interpretable
+% -- effect size estimates reliable
+
+% 
+% All the points made here about power and Types M and S error are discussed in depth, using linguistic data examples (including German incomplete neutralization), by \citet{vasishth2017statistical,vasishth2016statistical,nicenboim2018using}.
+
+
+% 
+% \section{Applications/design analysis/null results}
+% \label{sec:design-analysis}
+% 
+%  
+% \section{Test}
+
+% FUTURE: stuff from previous chapter pasted in because it belongs here if anywhere:
+% 
+% \hypertarget{parametric-versus-non-parametric-tests}{%
+% \subsection{Parametric versus non-parametric tests}\label{parametric-versus-non-parametric-tests}}
+% 
+% For the verb frequency example, where the data is not normally distributed, the \(t\)-test has a higher \(p\)-value than the Wilcoxon test:
+% 
+% \begin{itemize}
+% \item
+%   Two-sample \(t\)-test: \(p = 0.0083\)
+% \item
+%   Two-sample Wilcoxon test: \(p = 0.0024\)
+% \end{itemize}
+% 
+% When the samples being compared \textbf{are} normally distributed, the \(t\)-tests will have a (slightly) lower \(p\)-value:
+% 
+% <<>>=
+% set.seed(981)
+% x1 <- rnorm(100, mean=1.5, sd=0.5)
+% x2 <- rnorm(100, mean=1, sd=1.0)
+% t.test(x1, x2)
+% wilcox.test(x1, x2)
+% @
+% 
+% because the \(t\)-test is ``more powerful'' (less likely to miss inter-group differences that do in reality exist) for data that obeys the \(t\)-test's assumptions.
+% 
+% 
+
+% \hypertarget{type-i-and-type-ii-error}{%
+% \subsubsection{Type I and Type II error}\label{type-i-and-type-ii-error}}
+% 
+% When should you use parametric versus non-parametric hypothesis tests, more generally? It depends on what your data looks like, and how much you weight the risk of missing a true effect ( \emph{Type II error}, which is one minus \emph{power}) versus the risk of detecting a spurious effect (\emph{Type I error}).If you have a choice between a parametric and non-parametric test (such as \(t\)-tests and Wilcoxon tests):
+% 
+% \begin{itemize}
+% \item
+%   The parametric test will (often) be more powerful if its assumptions are met (lower Type II error), and potentially invalid otherwise---susceptible to detecting spurious effects (higher Type I error)\footnote{Using an ``invalid'' test could also lead to Type II errors, but we emphasize Type I errors for this discussion.}
+% \item
+%   The non-parametric test potentially has less power to detect effects that in fact exist (higher Type II error), but requires fewer assumptions about the data, thus minimizing the risk of detecting spurious effects (lower Type I error)
+% \end{itemize}
+% 
+% The convention in cognitive/behavioral sciences is to prioritize minimizing Type I error over Type II error, which would suggest using the non-parametric test unless you are sure the parametric test is appropriate. However, the choice to minimize Type I error at the expense of power is mostly just tradition, and depending on your research questions it may make more sense to prioritize higher power (assuming the assumptions of the parametric test are met!). This tension between Type I error and Type II error when choosing between possible statistical tools---and to what extent currently standard methods are due to convention versus principled reasons---will come up repeatedly in this book.
+% 
+% In general the more estimates/fewer assumptions go into a test statisistic, the broader its distribution. This implies a larger \(p\)-value, and (assuming the null hypothesis is in fact false) means the test has less power to detect differences.
+% 
+% 
+% ----------------
+
+% 
+% - Trying out example to illustrate power:
+% <<power_plot_1_calc, echo=FALSE>>=
+% sims_t_test_decision <- function(mu_1, mu_2, sig_1, sig_2, n_1, n_2, alpha=0.05){
+%   x1 <- rnorm(n=n_1, mean=mu_1, sd=sig_1)
+%   x2 <- rnorm(n=n_2, mean=mu_2, sd=sig_2)
+%   
+%   my_test <- t.test(x1, x2)
+%   #print(my_test)
+%   decision <- ifelse(my_test$p.value < alpha, "reject", "accept")
+%   return(decision)
+% }
+% 
+% ## so we can run it in a tidy workflow
+% sims_t_test_decision <- Vectorize(sims_t_test_decision)
+% 
+% n_sim <- 2500
+% 
+% ## real values
+% ## mu_1 <- 6.5 
+% ##mu_2 <- 7.7 
+% 
+% mu_1 <- 152
+% 
+% ## these things actually vary
+% #mu_diff_vals <- c(1, 8, 16)
+% mu_diff_vals <- c(4, 8, 30)
+% sig_vals <- c(45, 75)
+% n_vals <- c(25, 50, 100, 200, 300, 400, 500, 750, 1000)
+% alpha_vals <- c(0.05)
+% #alpha_vals <- c(0.05, 0.01, 0.005)
+% 
+% 
+% df_1 <- crossing(.iter = 1:n_sim, mu_diff = mu_diff_vals, 
+%                  sig = sig_vals, 
+%                  n_samp = n_vals, alpha = alpha_vals)
+% 
+% ## add decisions
+% df_1 <- df_1 %>% mutate(decision = sims_t_test_decision(mu_1 = mu_1, mu_2 = mu_1 + mu_diff, sig_1 = sig, sig_2 = sig, n_1 = n_samp, n_2 = n_samp, alpha = alpha)) 
+% 
+% summ_1 <- df_1 %>% group_by(mu_diff, sig, n_samp, alpha) %>% summarise(reject_prob= sum(decision=='reject')/n(), accept_prob_t = 1-reject_prob)
+% 
+% summ_1 %>% mutate(d_prime = mu_diff/sig) -> summ_1
+% 
+% @
+% 
+% <<power_plot_1, echo=FALSE>>=
+% summ_1 %>% ggplot(aes(x=n_samp, y = reject_prob)) + geom_line(aes(color=factor(mu_diff), lty=factor(sig))) +  ylab("Power") + geom_hline(aes(yintercept=0.8), size=1, color='black')
+% @
+
+
+
+
+% 
+% -----
+% 
+% \textbf{Moved from previous chapter here}: the thinking being, discussing assumptions of tests and what effect they can have makes sense to do *after* we've introduced different kinds of errors you can make. Then can use the assumptions text as examples using introduced terminology (like "conservative", "Type II error").
+% 
+% In last chapter we already discussed normality assumption, though.  BUT here we still need "what effect could have on the data" for normality assumption---show easy Type I errors due to outliers (or skew).
+
+\section{Assumptions of hypothesis tests and consequences}
+\label{sec:assumptions-hyp-tests}
+
+%$t$-test}
+
+Any statistical method makes assumptions about the data and how it was generated.  In practice, one's data never meets all assumptions, or some assumptions cannot be verified.  Thus it is important to understand how serious (or not) violations of each assumption are, and what effect they could have on the results. The error concepts introduced above (bias, Types I/II and M/S error) provide a precise way to do so.
+%us talk about  This is one important application of the error concepts introduced so far (bias, Types I/II and M/S error).  
+
+In later chapters (especially Chapter~\ref{chap:linear-regression-2}) we discuss the assumptions of regression models in detail. Here we give a couple examples using 
+%hypothesis tests covered so far (
+two-sample $t$-tests and Wilcoxon tests, because they share much in common with regression model assumptions, but in a simpler setting.
+
+\subsection{Data distribution}
+
+Two-sample $t$-tests assume that data (within each sample) is normally distributed, while Wilcoxon rank-sum tests make almost no assumptions about the distribution.
+%\footnote{Both tests also assume that the data come from a continuous distribution (not discrete); and that the samples are representative of the population, etc. (Section~\ref{sec:population-sample}).}
+%Wilcoxon rank-sum tests replace the normality assumption with a much weaker one: the samples' distributions are identical up to a location shift.
+
+Because $t$-tests calculate two means, they can be strongly affected by deviations from normality that affect means---such as clear outliers, or highly skewed data (in one or both samples).  The example in Section~\ref{sec:example-nonnormality} showed how a Type II error could occur in this way.  %It should be intuitive  that 
+Outliers or skew can also cause Type M error (because they bias the estimated means).
+
+Type I or Type S errors can also result from applying a $t$-test to non-normal data,  especially in a small dataset. For example, consider the plot in Figure~\ref{fig:neutralization-1} (right), based on about 25 observations per group.   The $t$-test carried out on this data  gave $p = \Sexpr{tt_7$p.value}$, 95\% CI \Sexpr{t_test_ci(tt_7)} msec.  Now suppose we add 5 \ttt{voicing}=\tsc{voiceless} observations with duration of 1000 msec; this could have happened by experimenter or annotator error.
+%, followed by not visualizing the data for sanity checks before conducting hypothesis tests. 
+The result of the $t$-test then changes dramatically ($p$-value and 95\% CI):
+
+<<output.lines=5:8>>=
+neut_7 %>%
+  select(voicing, vowel_dur) %>%
+  add_row(voicing = rep("voiceless", 5), vowel_dur = rep(1000, 5)) %>%
+  t.test(vowel_dur ~ voicing, data = .)
+@
+
+If the null hypothesis is in fact true (no difference between groups), the hypothesis test carried out in Section~\ref{sec:example-nonnormality} gave the right decision, while the test after adding the 5 points gives a Type I error.
+
+% Imagine the null hypothesis is in fact true (no difference between groups), so the hypothesis test carried out in XX gave the right decision ($p = \Sexpr{tt_7$p.value}$, with $\alpha = 0.05$).
+% The result with the 5 points added is then a Type I error. 
+
+If the null hypothesis isn't true,  we know on scientific grounds (Section~\ref{sec:chap-3-prelim}) that it is very unlikely that {voiceless} stops have longer duration---as estimated by this $t$-test---so the estimated difference in means gives a Type S error.
+
+
+\subsection{Independence assumptions}
+\label{sec:t-test-indep-assumptions}
+
+Both $t$-tests and Wilcoxon tests make the same independence assumptions:
+\begin{itemize}
+\item Within-sample: observations within each sample are independent.
+\item Between-sample: the two samples are independent (i.e.,\ every pair of observations from samples 1 and 2 is independent).
+\end{itemize}
+
+The independence assumptions do not hold for many basic questions addressable with linguistic datasets, since most linguistic data involves multiple observations per person or per linguistic object (e.g.,\ sentence), which we don't expect to be independent.   
+%Unfortunately, 
+Violations of independence assumptions are very important, and can easily lead to Type I or Type II errors; they are probably the most important assumptions underlying statistical analysis of linguistic data more generally
+%We discuss such violations  assumptions, which are arguably the most important condition underlying %ndependence assumptions are arguablyis arguably the most important assumption underlying 
+%statistical analysis of linguistic data more generally 
+(Box~\ref{box:pseudoreplication}). We discuss further when we turn to clustered data in Chapter~\ref{chap:lmm-1}.
+%
+% ---a.k.a.\ Type I and Type II errors.   Suppose 
+For now, here are a couple examples for $t$-tests, using the \ttt{neutralization} data.
+
+\begin{boxedtext}{Broader context: Pseudoreplication and $t$-tests}
+\label{box:pseudoreplication}
+
+Applying a $t$-test to data where the independence assumptions are not met is an example of \emph{pseudoreplication}: analyzing non-independent observations as if they were independent. Pseudoreplication is a much larger issue than $t$-tests, because similar independence assumptions hold for most basic statistical methods: correlations, (non-repeated-measure) ANOVAs, linear and logistic regressions, etc.  Violations of independence assumptions are very important because they can easily lead to Type I/II (and M/S) errors; they are very common when analyzing data not just in linguistics but in many fields (e.g.,\ ecology, neuroscience: \citealp{hurlbert1984pseudoreplication,lazic2010problem}).
+%Freeberg \& Lucas 2009, Hurlbert, 1984).
+% these are just two refs copied from Winter, but on further search, tjey're good ones.. there is a whole debate stemming from Hurlbert on how much of aproblem pseudoreplication is, esp in ecology and psychology (?)% FUTURE
+%or M/S errors assumptions are %very important () of independence are very important () violations of independence can easily lead to Type I/II or M/S errors---Winter terms independence the `mother of all assumptions' for analyzing lingusitic data (REF-14.2)---and 
+In linguistics,  \citet{winter2011pseudoreplication} introduced the term `pseudoreplication' in the context of analyzing
+%for analyzing 
+phonetic data.
+%\citet{winter2011pseudoreplication}  and provides a good discussion.
+
+Because pseudoreplication is so common, it is useful to know how to detect it in published work.  For $t$-tests, this is simple: as long as degrees of freedom are reported, one can check $df$ against the number of independent units in the study. For example, the two-sample $t$-test for the effect of voicing on vowel duration in the \ttt{neutralization} data in Section~\ref{sec:effect-size-1} has $df = \Sexpr{tt_all$parameter}$. This is far closer to the number of observations in the dataset (\Sexpr{neut_n}) than the number of subjects (\Sexpr{neut_n_sub}) or items (\Sexpr{neut_n_item}) in this dataset, showing that pseudoreplication occurred.  
+%Winter  shows that at least 60\% of studies in a sample of 36 phonetics conference papers show $t$-tests with elevated degrees of freedom, suggesting pseudoreplication.   
+
+This points to a couple broader implications for reading the literature and analyzing data.  Pseudoreplication is very common in linguistic research, especially in older papers in subfields with long histories of quantitative work (e.g.,\ phonetics, acquisition, sociolinguistics); psycholinguistics is a notable exception in having adopted methods for analyzing non-independent data from the early 1970s (see Box~\ref{box:repeated-measures}).
+%recognizing the importance of  
+It is important to be aware of this issue when reading the literature (especially older papers), and if pseudoreplication is present, think critically about what effects it may have.  This point applies just as much for regression models, and we will return to this issue in later chapters.  
+
+Yet it is also important to not immediately discount a study's results because of pseudoreplication---similarly to other assumptions made by statistical models (e.g.,\ normality: Box~\ref{box:t-test-normality}).  As important as independence violations are, in many cases the qualitative results of an analysis do not change when a more correct analysis method is used.
+%(which respects the assumptions).  
+For example, most $t$-tests conducted in the current chapter violate independence assumptions---yet the results are very similar (in terms of effect size, whether $p$ is above or below 0.05) to when a `correct' method is used.
+%(we checked). 
+Often it makes sense in data analysis to use simpler methods---whether as a first step towards a more complex method,
+%(which may involve complex programming or  models which take days to run),
+or for pedagogical purposes.
+%(as in this book). 
+
+% FUTURE: (but maybe in LMM chapter) usually pseudoreplication is there whether we like it or not -- even when LMMs used, often there is *some* unaccounted for non-indepenence (like repetitions from same subject/item).  so in all, there must be a balance between addressing pseudoreplication (more complex methods) and being aware of it and its implications (simpler methods). as with all stat model assumptions.
+\end{boxedtext}
+
+
+
+
+<<indep_typei_ii_setup, echo=FALSE>>=
+sub_no <- 14
+
+n_14 <- neut_paired %>%
+  filter(subject == 14) %>%
+  summarise(nPos = sum(voiced > voiceless), nNeg = sum(voiced <= voiceless))
+@
+
+\subsubsection{Example: Type I error from non-independence}
+
+Let's group subjects in a way we are 
+%pretty
+sure does not in reality affect vowel duration---whether the subject was in the first or second 50\% of people recruited for the experiment (\ttt{early\_subject}):
+
+<<>>=
+neutralization$early_subject <-
+  ifelse(as.numeric(neutralization$subject) < 9, "early", "late")
+@
+
+<<indep_typei_ex, echo=FALSE, out.width="45%", fig.width=default_fig.width*.45/default_out.width, fig.cap="Distribution of vowel duration as a function of speaker `earliness' (from the first or second 50\\% of the \\ttt{neutralization} data) for all observations (left), and for speakers' mean durations (right).">>=
+neutralization %>% ggplot(aes(x = early_subject, y = vowel_dur)) +
+  geom_jitter(width = 0.1, size = 0.5) +
+  xlab("Speaker type") +
+  ylab("Vowel duration (msec)") +
+  ggtitle("Observations") +
+  theme(legend.position = "none")
+
+neutralization %>%
+  group_by(subject, early_subject) %>%
+  summarise(m = mean(vowel_dur)) %>%
+  ggplot(aes(x = early_subject, y = m)) +
+  geom_jitter(width = 0.1) +
+  xlab("Speaker type") +
+  ylab("Vowel duration (msec)") +
+  ggtitle("Speaker means") + ylim(54, 307)
+@
+  
+<<typei_ex_tests, echo=FALSE>>=
+## Test on observations
+typei_ex_test1 <- neutralization %>% t.test(vowel_dur ~ early_subject, data = .)
+
+typei_ex_test2 <- neutralization %>%
+  group_by(subject, early_subject) %>%
+  summarise(m = mean(vowel_dur)) %>%
+  t.test(m ~ early_subject, data = .)
+@
+
+\begin{table}
+\begin{tabular}{cllllll}
+\toprule
+Data & Estimate & $p$ & $t$ & $df$ & 95\% CI  \\
+<<echo = FALSE, warning=FALSE, message=FALSE, results = 'asis'>>=
+library(xtable)
+# printWrapper <- function(x){x %>%  xtable() %>% print(only.contents=TRUE, include.rownames=FALSE, include.colnames=FALSE)}
+
+typei_ex_test1 %>%
+  tidy() %>%
+  select(one_of("estimate", "p.value", "statistic", "parameter", "conf.low", "conf.high")) %>%
+  add_column(data = "observations", .before = 1) %>%
+  mutate(ci = str_glue("[{round(conf.low,1)}, {round(conf.high,1)}]")) %>%
+  select(-conf.low, -conf.high) -> k1
+
+# printWrapper()
+
+## Test on speaker means
+typei_ex_test2 %>%
+  tidy() %>%
+  select(one_of("estimate", "p.value", "statistic", "parameter", "conf.low", "conf.high")) %>%
+  add_column(data = "speaker means", .before = 1) %>%
+  mutate(ci = str_glue("[{round(conf.low,1)}, {round(conf.high,1)}]")) %>%
+  select(-conf.low, -conf.high) -> k2
+
+bind_rows(k1, k2) %>% printWrapper()
+# printWrapper()
+@
+\end{tabular}
+\caption{Results of two-sample $t$-tests corresponding to the left and right panels of Figure~\ref{fig:indep_typei_ex}.}
+\label{tab:typei-ex}
+\end{table}
+
+Plotting the data (Figure~\ref{fig:indep_typei_ex}: left) suggests that \tsc{late}
+%`late' 
+subjects have longer vowel durations, and we can quantify this intuition with a two-sample $t$-test (results summarized in Table~\ref{tab:typei-ex}: `observations'):
+<<eval=FALSE>>=
+neutralization %>% t.test(vowel_dur ~ early_subject, data = .)
+@
+
+But this must be a spurious finding (Type I error, anti-conservative $p$-value)---the null hypothesis of no difference between groups is presumably true.
+%\footnote{In fact, we just tried a few  nonsensical ways of grouping subjects until one gave a low $p$-value.}
+
+A two-sample $t$-test is not appropriate here because observations are not in fact independent---different observations from the same subject (e.g.,\ the red dots in Figure~\ref{fig:indep_typei_ex} (left)) tend to cluster together. Intuitively, each subject should only give one data point towards answering the question, ``do early subjects have shorter vowels?''  We can do this by examining the mean duration for each subject, in  Figure~\ref{fig:indep_typei_ex} (right), which suggests weak support for a \tsc{late}/\tsc{early} difference. This intuition is confirmed by a two-sample $t$-test on subjects' mean durations (Table~\ref{tab:typei-ex}: `Speaker means'):
+<<eval=FALSE>>=
+neutralization %>%
+  group_by(subject, early_subject) %>%
+  summarise(m = mean(vowel_dur)) %>%
+  t.test(m ~ early_subject, data = .)
+@
+This test gives a similar estimated early/late difference but (correctly) concludes this difference is not significant. 
+
+Here, not accounting for grouping structure (one kind of non-independence) causes a Type I error because of the model's assumption about how much independent information the data contains (the degrees of freedom).  This issue will be a major motivation for mixed-effects models (Chapter~\ref{chap:lmm-1}).
+
+
+
+\subsubsection{Example: Type II error from non-independence}
+\label{sec:type-ii-error}
+
+%As an example, 
+Consider checking whether there is an effect of voicing on vowel duration for data from subject  \Sexpr{sub_no} in the \ttt{neutralization} data---which is one of the $t$-tests in the multiple comparisons example in Section~\ref{sec:mult-comp-ex}. Within each subject observations come in voiced/voiceless pairs---thus, the two observations for each pair are not independent. What effect does taking this non-independence into account have on our conclusion?  Figure~\ref{fig:indep_typeii_ex} plots \ttt{vowel\_dur} as a function of \ttt{voicing} for subject \Sexpr{sub_no}, in two ways.   
+
+<<indep_typeii_ex, echo = FALSE, out.width="45%", fig.width=default_fig.width*.45/default_out.width, fig.cap="Distribution of vowel duration as a function of following consonant voicing, for speaker 14 observations from the \\ttt{neutralization} data, without (left) and with (right) observations paired by \\ttt{item\\_pair}.">>=
+neutralization %>%
+  filter(subject == 14) %>%
+  ggplot(aes(x = voicing, y = vowel_dur)) +
+  geom_jitter(width = 0.1) +
+  ylab("Vowel duration (msec)") +
+  ggtitle("Unpaired")
+
+neutralization %>%
+  filter(subject == 14) %>%
+  ggplot(aes(x = voicing, y = vowel_dur)) +
+  geom_line(aes(group = item_pair)) +
+  geom_point() +
+  ylab("Vowel duration (msec)") +
+  ggtitle("Paired by item")
+@
+
+If we assume the \tsc{voiced} and \tsc{voiceless} observations are independent (left), the effect of voicing looks very weak---small group difference relative to within-group variability.  But if we know that \tsc{voiced} and \tsc{voiceless} observations come in pairs (right), the pattern is clearer: \tsc{voiced}$>$\tsc{voiceless} for \Sexpr{n_14$nPos} pairs (\Sexpr{100*with(n_14, nPos/(nPos+nNeg))}\%), suggesting a clear effect of voicing.  These different intuitions are borne out by a two-sample $t$-test (false independence assumption) versus a paired $t$-test (independence assumption satisfied), whose results are summarized in Table~\ref{tab:typeii-ex}.
+<<eval=FALSE>>=
+filter(neutralization, subject == 14) %>%
+  t.test(vowel_dur ~ voicing, data = .)
+filter(neut_paired, subject == 14) %>%
+  t.test(.$voiced, .$voiceless, paired = TRUE, data = .)
+@
+
+<<typeii_ex_tests, echo=FALSE>>=
+## Test on observations
+typeii_ex_test1 <- neutralization %>%
+  filter(subject == 14) %>%
+  t.test(vowel_dur ~ voicing, data = .)
+
+typeii_ex_test2 <- neut_paired %>%
+  filter(subject == 14) %>%
+  t.test(.$voiced, .$voiceless, paired = TRUE, data = .)
+@
+
+\begin{table}
+\begin{tabular}{cllllll}
+\toprule
+Data & Estimate & $p$ & $t$ & $df$ & 95\% CI & \\
+<<echo = FALSE, warning=FALSE, message=FALSE, results = 'asis'>>=
+library(xtable)
+
+## unpaired
+typeii_ex_test1 %>%
+  tidy() %>%
+  select(one_of("estimate", "p.value", "statistic", "parameter", "conf.low", "conf.high")) %>%
+  add_column(data = "unpaired", .before = 1) %>%
+  mutate(ci = str_glue("[{round(conf.low,1)}, {round(conf.high,1)}]")) %>%
+  select(-conf.low, -conf.high) -> k1
+
+## paired
+typeii_ex_test2 %>%
+  tidy() %>%
+  select(one_of("estimate", "p.value", "statistic", "parameter", "conf.low", "conf.high")) %>%
+  add_column(data = "paired", .before = 1) %>%
+  mutate(ci = str_glue("[{round(conf.low,1)}, {round(conf.high,1)}]")) %>%
+  select(-conf.low, -conf.high) -> k2
+
+bind_rows(k1, k2) %>% printWrapper()
+@
+\end{tabular}
+\caption{Results of two-sample $t$-tests corresponding to the left and right panels of Figure~\ref{fig:indep_typeii_ex}.}
+\label{tab:typeii-ex}
+\end{table}
+
+The estimated voiced/voiceless difference (= effect size) is the same in each test (\Sexpr{typeii_ex_test2$estimate} msec), but it is only reliably different from zero in the second test.
+Thus, assuming subject 14 does in reality have a positive voiced$/$voiceless duration difference, the fact that observations from the same item are not independent would result in a {Type II error} (and a conservative $p$-value).
+
+Until we cover mixed-effects regression, we will get around the fact that most linguistic data involves grouping structure (and hence $t$-tests/linear/logistic regressions will have non-independent errors) in one of three ways: 
+\begin{enumerate}
+\item Using datasets \textbf{without grouping structure}, either because this is how the raw data looks (e.g.,\ studies of a language's lexicon such as \ttt{regularity}), or because observations have been pre-averaged to remove grouping structure (such as \ttt{english}).
+\item \textbf{Taking a subset} of a dataset which removes grouping structure (e.g.,\ \ttt{transitions\_sub} in last chapter).
+\item Committing \textbf{pseudoreplication}:  analyzing datasets with grouping structure (e.g.,\ \ttt{neutralization}), using  methods that assume independence of errors (e.g.,\ $t$-tests, linear regression), with the understanding that our results are more likely to be `wrong' in some sense (Types I/II/M/S error).
+\end{enumerate}
+
+
+
+
+\section{Other reading}\label{sec:other-reading-ch3}
+
+References on power, effect size, and related issues include: \citet{kline2013beyond}, \citet{cohen1988statistical,cohen1992power}, \citet{hallahan1996statistical}, \citet{cumming2012understanding}, \citet{kelley2012effect}, 
+\citet{pek2018reporting} (who give concrete examples for reporting effect size), as well as the
+%these issues are also discussed at length in the 
+APA and ASA  resources cited in the last chapter.  \citeauthor{kline2013beyond} and \citeauthor{cumming2012understanding}  are part of the `new statistics' movement to emphasize estimation and precision over traditional NHST ($p$-values);
+%especially in psychology;  
+\citet{cumming2014new} gives an overview.     
+For linguistic data, power and effect size are discussed by \citet{kirby2018model,kirby2018mixed}, \citet{vasishth2016statistical}, and \citet[][chap.~9]{winter2019statistics}.
+
+Type M and Type S error are discussed by \citet{gelman2014beyond}, and more technically by \citet{gelman2000type,lu2019note}. In linguistics, \citet{vasishth2016statistical} introduces Types M and S errors, which have been used in a growing number of psycholinguistic and phonetic studies \citep[e.g.,][]{nicenboim2018using,vasishth2018statistical}, including `design analysis' for the German IN case by \citet{kirby2018mixed}.
+
+%% FUTURE for reading:
+% - reading on why this all matters for study planning etc: the broader `replication crisis'.
+
+\begin{exercises}
+
+% FUTURE: more exercises, possibly
+% \exer{Power of parametric and nonparametric tests}
+% 
+% FUTURE: if used, would have them simulate from normally-distributed
+% 
+% \exer{Family-wise error rate and visualization}
+% 
+% (FUTURE: say something about usefulness of the FWER plot for reading figures? or add an exercise.)
+% 
+% \exer{Independence assumptions and the Wilcox test}
+% 
+% FUTURE: show that the same issues disussed in independence assumptions section hold when you use Wilcox test, and plot medians instead of means.
+
+\exer{Write code to calculate the effect sizes ($d$) for \ttt{prosodic\_boundary},  \ttt{accent\_type}, and \ttt{gender} shown in Section~\ref{sec:in-context} \label{ex:neut-d}
+}
+
+
+\exer{ As noted in Box~\ref{box:pseudoreplication}, most $t$-tests carried out in this chapter on the \ttt{neutralization} data involve pseudoreplication---violation of independence assumptions.}
+
+\subexer{Examine how the data is organized by \ttt{subject}, \ttt{item\_pair}, and \ttt{voicing} (e.g.,\ by cross-tabulating using \ttt{xtabs}).  How and why are observations non-independent in this dataset?}
+
+\subexer{Find two examples of hypothesis tests in this chapter where independence assumptions are violated (outside of Section~\ref{sec:t-test-indep-assumptions}), and explain why they are violated in each case.}
+
+\subexer{Find the one example in this chapter (outside of Section~\ref{sec:t-test-indep-assumptions}) where independence assumptions are not violated---and explain why not.}
+
+
+
+\end{exercises}

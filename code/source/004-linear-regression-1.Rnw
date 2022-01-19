@@ -1,0 +1,2039 @@
+% !Rnw root = master.Rnw
+
+<<cache=FALSE, echo=FALSE>>=
+## use num signif digits (which is what
+## tidy print does by default) instead of decimal
+options(knitr.digits.signif = TRUE)
+options(digits = 2)
+@
+
+\hypertarget{linear-regression}{%
+\chapter{Linear regression 1}\label{chap:linear-regression-1}}
+
+This chapter  introduces regression in general (Section~\ref{sec:regression-general-introduction}), then linear regression for one predictor  (Section~\ref{sec:simple-linear-regression}) and several predictors (Section~\ref{sec:multiple-linear-regression}--\ref{sec:lr-interactions}), focusing on how to fit and interpret basic models. 
+
+\section{Preliminaries}
+
+\subsection{Packages}
+
+We assume that you have loaded packages from the previous chapters, in addition to broom, 
+%\citep{broom}, 
+a tidyverse package for working with fitted models, 
+and sjPlot for plotting model predictions
+\citep{broom,sjPlot}:
+
+<<ch4-libraries, cache=FALSE, message=F, error=F, warning=F, echo=1:4>>=
+library(languageR)
+library(tidyverse)
+library(patchwork)
+library(broom)
+library(sjPlot)
+select <- dplyr::select # to prevent masking by MASS::select
+
+library(feather)
+@
+
+\subsection{Data}
+\label{sec:english-dataset}
+
+We also assume that you have loaded the \ttt{neutralization} dataset, as in Chapter~\ref{chap:es-power}:
+
+<<ch4_datasets>>=
+neutralization <- read.csv("data/neutralization_rmld.csv",
+  stringsAsFactors = TRUE) %>%
+  filter(!is.na(prosodic_boundary))
+@
+
+We have also dropped a row from \ttt{neutralization} with missing data for a  variable we will use (\ttt{prosodic\_boundary}).
+
+\subsubsection*{The \ttt{english} dataset}
+
+We make use of the \ttt{english} dataset, which is part of {languageR}, and described in detail on its help page (\ttt{?english}). This psycholinguistic dataset comes from the English Lexicon Project \citep{balota2007english},
+%\footnote{\url{http://elexicon.wustl.edu/}}, 
+which obtained measures of lexical access for a large subset of the English lexicon, across many speakers of two age groups (\ttt{AgeSubject}: levels \tsc{old}, \tsc{young}), to understand what properties of words affect how quickly they are perceived and produced.  The \ttt{english} dataset contains a subset of the English Lexicon Project data ($n = \Sexpr{nrow(english)/2}$ words, all nouns and verbs), with two rows per word ($n = \Sexpr{nrow(english)}$) corresponding to the two age groups, and columns including:
+\begin{itemize}
+\item Lexical access measures, averaged across all subjects from the same age group:
+\begin{itemize}
+\item Reaction time for lexical decision task (\ttt{RTlexdec}: msec, log-transformed), where participants judge whether a visually-presented string of letters is a word (`flip') or not (`flirp'). 
+\item Reaction time for word naming task  (\ttt{RTnaming}: msec, log-transformed), where participants produce a visually-presented word as quickly as possible.
+\item Proportion of subjects who accepted this word in the lexical decision task (\ttt{CorrectLexdec}).
+\end{itemize}
+\item Word frequency (\ttt{WrittenFrequency}: log-transformed)
+\item Word familiarity (\ttt{Familiarity}): subjective ratings.
+\item Number of morphologically-related words (\ttt{FamilySize}: log-transformed)
+\end{itemize}
+
+We change the \ttt{AgeSubject} factor so the \tsc{young} level comes before \tsc{old}, 
+%are ordered as \tsc{young}$<$\tsc{old}, 
+which makes more conceptual sense:
+<<>>=
+english <- mutate(english, AgeSubject = relevel(AgeSubject, "young"))
+@
+
+Section~\ref{sec:releveling-factors-interpretability} discusses `releveling' further.
+
+
+
+\hypertarget{regression-general-introduction}{%
+\section{Regression: General introduction}\label{sec:regression-general-introduction}}
+
+% First, what is `regression'?  
+Regression analysis is ``a conceptually simple method for investigating functional relationships among variables'' \citep[][1]{chatterjee2012regression}. The variable to be explained, written $y$, is called the \emph{response} (or `dependent variable', etc.), often written $y$.  The explanatory variables, written  $x_1, x_2, \ldots$, are called \emph{predictors} (or `independent variables', etc.).
+
+Regression modeling can have one of several objectives (\citealp[][\S1.3]{faraway2015linear}; \citealp{shmueli2010explain}):
+\begin{enumerate}
+\item \textbf{Prediction}: of future values of $y$, given  values of the predictors.
+\item \textbf{Explanation}, or \textbf{estimation}:  of the effect of predictors on the response, or the relationship between the two.
+\item \textbf{Description}: of the relationship between the predictors and the response, as in an exploratory study.
+\end{enumerate}
+
+For (2): usually we would like to infer causal relationships ($x_1$ affects $y$, not vice versa), but this is often not possible, hence the wording of `effect' (causal) versus `relationship' (causality uncertain). `Estimation' refers to the actual values of parameters characterizing relationships (e.g.,\ regression coefficients).  Description is rarely the end goal in a study, but regressions can be part of exploratory data analysis, and probably many analyses of linguistic data are a mixture of exploratory and confirmatory (even when we think they are confirmatory), as discussed in Section~\ref{sec:eda-cda}).
+%because it is rare that the hypotheses tested in linguistic studies are {completely} fixed before the data is analyzed.\footnote{\citet[][chap.~16]{winter2019statistics} gives an excellent discussion of this point for linguistic studies, and why it isn't necessarily a big problem.}
+
+The goal of the analysis matters because it can affect what methodology is best, as we will see.  The important distinction is between (1) and (2)---whether we prioritize predictive accuracy or parameter estimation---which can lead to different models. 
+
+Usually in language sciences explanation is the goal, or the goal is not explicitly stated.  So we will often use language that implies the `explanation'/`estimation' goal.  
+
+As a running example, we consider a regression analysis modeling a word's lexical decision reaction time (or just `reaction time': \ttt{RTlexdec}) for the \ttt{english} dataset, as a function of predictors listed above (age of subject, word frequency, etc.).  The goal of the analysis could be:
+\begin{itemize}
+\item Prediction: predict \ttt{RTlexdec} as accurately as possible given a new word of English.
+%( \ttt{WrittenFrequency}=2, etc., for \tsc{young} subjects
+\item Explanation: determine how much \ttt{RTlexdec} increases as a result of \ttt{AgeSubject} changing (causal: we wait 20 years), or how much it differs between \tsc{young} and \tsc{old} subjects (non-causal).
+\item Description: generate hypotheses about which predictors are most likely to affect reaction time, to be tested on a new lexical decision dataset for English speakers (of another dialect, say), or as part of planning an English Lexicon Project-like study for a new language where resources are much more limited and only a few predictors can be measured.
+\end{itemize}
+
+
+\begin{boxedtext}{Broader context: What do regressions tell us?}
+While `estimation' can be precisely defined (estimation of parameters,
+%a parameter as precisely as possible,
+in the terms discussed in chap.~\ref{chap:inference-1}), what `explanation' actually means is tricky. Regression has a directional interpretation (predictors affect the response), and typically we would like to think of the model in causal terms.  But arguing for causality in regression models is hard, especially in observational data (e.g., from linguistic corpora). It requires the tools of \emph{causal inference}, which are  beyond the scope of this book (see e.g.,\ \citealp[][\S5.2]{faraway2015linear}; \citealp{mcelreath2020statistical}; \citealp[][chap.\ 9]{gelman2007data}).
+%; the tools of \emph{causal inference}  
+Even in 
+well-designed controlled experiments, where only 1--2 things vary, a causal interpretation relies on many assumptions, only some of which can be checked.
+%The bigger issue here is that actually \textbf{proving} causality is impossible, because  ``it's always possible to imagine some way in which your inference about cause is mistaken, no matter how careful the design or analysis'' \citep[][120]{mcelreath2015statistical}.  
+The difficulty of causal interpretation doesn't detract from the power of statistical analyses to give insights into research questions.   But in general we must just always assume that we are fitting correlational models, and bear the `correlation is not causation' adage in mind when interpreting our results. 
+
+Some of these issues are discussed for linguistic typology by \citet{roberts2013linguistic}.
+\end{boxedtext}
+
+%
+% \includegraphics{images/cow_milk.png}
+%
+% \begin{quote}
+% \textbf{Questions}:
+%
+% \begin{itemize}
+% \item
+%   What is the response variable in this study?
+% \item
+%   What could be a predictor variable?
+% \end{itemize}
+% \end{quote}
+
+\subsection{Linear models: Terminology}
+\label{sec:lin-mod-term}
+
+The relationship between variables is captured by a regression \emph{model}:
+\begin{equation*}
+  y = f(x_1, x_2, ..., x_k) + \epsilon
+\end{equation*}
+
+In this model, $y$ is a (random) variable approximated by a function of the $k$ predictors, and the difference between the model and reality is called the \emph{error} (\(\epsilon\)).
+%\footnote{Denoting the number of predictors by $p$ is confusing, since $p$ is often used to mean `$p$-value', but standard.} notation is standard so it is good to be aware of it.}
+
+Throughout much of this book we will be dealing with \emph{linear models}, where the model can be written in this form \citep[][33]{harrell2015regression}:
+\begin{equation}
+C(y | x_1, \ldots, x_k) = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \cdots + \beta_k x_k 
+%+ \epsilon
+    \label{eq:gen-linreg1}
+\end{equation}
+
+Here, $C$ is some function of $y$, which differs depending on the type of regression model.  The \(\beta\)'s are called \emph{regression coefficients}. This turns out to be a very general class of model, which can be applied to a wide range of phenomena. Some important kinds of models that don't appear at first glance to fit equation \eqref{eq:gen-linreg1}, such as regression as a function of polynomials (like $y = \beta_0 + \beta_1 x + \beta21 x^2$: Section~\ref{sec:nl-effects-polynomials}), can be written in this form. 
+
+We will consider two broad types of regression in this book.  First is \emph{linear regression}, where the response ($y$) is a continuous variable---such as modeling reaction time (\texttt{RTlexdec}) as a function of word frequency (\texttt{WrittenFrequency}) for the \ttt{english} dataset.  In this case, the function $C$ is just the identity plus an error term, and the regression model is:
+\begin{align}
+y & = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \cdots + \beta_k x_k + \epsilon \nonumber
+\\
+\epsilon &\sim N(0, \sigma)
+    \label{eq:linreg1}
+\end{align}
+
+Later (Chapter~\ref{chap:cda-logistic-regression}) we will consider \emph{logistic regression}, where the response is binary: 0 or 1. An example would be modeling whether a Dutch verb is regular or not (\ttt{Regularity}) as a function of which auxiliary it takes (\ttt{Auxiliary}) and its frequency (\ttt{WrittenFrequency}), in the \ttt{regularity} dataset.
+  %(from Chapter~\ref{chap:inference-1}). 
+  In this case $C$ predicts the probability that response is 1, given the values of the predictors.  
+
+Regression with just one predictor ($k=1$) is called \emph{simple}, while regression with multiple predictors ($k>1$) is called \emph{multiple}. The two examples just given would be `simple linear regression' and `multiple logistic regression'.
+
+Predictors can be \emph{continuous}, such as word frequency, or \emph{categorical} (also called \emph{factors}) such as participant age group, or verb auxiliary.
+
+\begin{boxedtext}{Broader context: What about ANOVAs?}
+Certain special cases of linear models that are common go by their own names:
+\begin{itemize}
+\item \emph{Analysis of variance} (ANOVA)  models continuous $y$ using categorical predictors.  ANOVA is used to  analyze variability between groups.
+\item \emph{Analysis of covariance} (ANCOVA) models continuous $y$ with a mix of categorical and continuous predictors. ANCOVA is used to model variability between groups (the categorical predictors) while controlling for `covariates' (the continuous predictors).
+\end{itemize}
+
+We are not covering these cases in this book, but they (especially ANOVAs) are widely used in language research, and you may have seen them before. Introductions for linguists  include \citet{rietveld2005statistics}, \citet[][chap.~8]{levshina2015linguistics}, and \citet[][chap.~4]{johnson2008quantitative}.  Classical statistics training in behavioral sciences emphasizes ANOVAs,
+%\citep[e.g.,][]{field2012discovering}, 
+as part of an emphasis on data from factorial experiments (where differences between `groups' or `conditions' are of primary interest)---so if you have taken a statistics course, chances are it covered ANOVAs.  Given that quantitative studies in linguistics take on many forms besides factorial designs, it is useful to just think of ANOVAs as a special case of  linear regression (see e.g.,\ \citealp{cohen1968multiple}; \citealp[][\S10.2.3]{field2012discovering}; \citealp[][\S5.4]{vasishth2011foundations}).
+%for linguistics). 
+% 
+%,kline2013beyond
+Once you understand linear regression well, understanding ANOVA analyses is relatively straightforward. 
+%
+% We are not covering these cases in this book, but ANOVAs (and ANCOVAs) are widely used in language research, and you may have seen them before. ANOVAs can be usefully thought of as just a \textbf{special case} of regression, as discussed in \citet{vasishth2011foundations}, \citet{levy2012probabilistic}, \citet{gelman2007data}. Once you understand linear regression well, understanding ANOVA analyses is relatively straightforward.
+\end{boxedtext}
+
+\hypertarget{steps-and-assumptions-of-regression-analysis}{%
+\subsection{Steps and assumptions of regression analysis}\label{steps-and-assumptions-of-regression-analysis}}
+
+Following \citet[][\S1.4]{chatterjee2012regression}, regression analyses have these broad steps:
+\begin{enumerate}
+\item Statement of the (scientific) problem
+\item Selection of possible variables
+\item Data collection/processing
+\item Model specification
+\item Model fitting
+\item Model criticism and validation
+\item Model selection
+\item Using the chosen model to address the problem
+\end{enumerate}
+
+
+For our running \ttt{english} example (Section~\ref{sec:regression-general-introduction}), steps (1)--(4) might be:
+\begin{itemize}
+\item Question: How do word frequency and subject age affect lexical decision time?
+\item Response=\ttt{RTLexdec}, predictors=\ttt{WrittenFrequency}, \ttt{AgeSubject}, any control predictors.
+\item Load these variables from the \ttt{english} dataset; do any processing and exploratory analysis to find outliers or problematic cases to be excluded.
+\item Linear regression with $y$=\ttt{RTlexdec}, $x_1$=\ttt{WrittenFrequency}, $x_2$=\ttt{AgeSubject}.
+\end{itemize}
+
+In this book we generally assume that steps (1)--(3) are given (you know what question you want to address, with a dataset you already have), and we are usually brief on (8) (which would be the focus of a publication).
+%---but we give concrete examples as we go along.
+
+In this chapter we focus on model specification and fitting (steps 4 and 5) for simple linear regression (Section~\ref{sec:simple-linear-regression}), then multiple linear regression (Section~\ref{sec:multiple-linear-regression}--~\ref{sec:lr-interactions}).  For now, we are assuming that the assumptions of linear regression are met (6), and which predictors go in the model has been fixed (7); we discuss these steps in the next chapter (Chapter~\ref{chap:linear-regression-2}).
+
+While posing the problem (1) and drawing conclusions about it based on the final model (8) must be done before and after anything else, the order of steps (2)--(7) are not fixed, because \textbf{regression analysis is an iterative process}. New models may be built based on model criticism, predictors may be included or excluded due to model selection or finding a mistake in data processing during model validation, and so on.  
+
+% \begin{enumerate}
+% \def\labelenumi{\arabic{enumi}.}
+% \tightlist
+% \item
+%   Statement of the problem
+%
+%   \begin{itemize}
+%   \tightlist
+%   \item Example: How does word frequency affect lexical access?
+%   \end{itemize}
+% \item
+%   Selection of potentially relevant variables
+%
+%   \begin{itemize}
+%   \tightlist
+%   \item Example:
+%     Ex: Height gain, daily milk consumption, age, and sex.
+%   \end{itemize}
+% \item
+%   Data collection
+%
+%   \begin{itemize}
+%   \tightlist
+%   \item
+%     Ex: data from an existing database.
+%   \end{itemize}
+% \item
+%   Model specification \& fitting
+%
+%   \begin{itemize}
+%   \tightlist
+%   \item
+%     Ex: height gain = \(\beta_0 + \beta_1 \cdot\) milk consumption \(+ \beta_2 \cdot\) sex \(+\) error
+%   \end{itemize}
+% \item Model validation and criticism
+% \item Model selection
+% \end{enumerate}
+
+\section{Simple linear regression}
+\label{sec:simple-linear-regression}
+
+<<slr-ex-1, echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width, warning=FALSE, fig.cap="Scatterplot of \\ttt{RTlexdec} as a function of \\ttt{WrittenFrequency} (left) and \\ttt{AgeSubject} (right), for the \\ttt{english} dataset. Lines show least-squares lines of best fit, which for the right plot is the line between group means.">>=
+filter(english, AgeSubject == "young") %>%
+  ggplot(aes(WrittenFrequency, RTlexdec)) +
+  geom_point(size = 0.25, alpha=0.25) +
+  stat_smooth(color = 'black', method = "lm") +
+  xlab("Word frequency") +
+  ylab("Reaction time (log msec)") +
+  ggtitle("Young subjects only")
+
+english %>% ggplot(aes(AgeSubject, RTlexdec)) +
+  geom_jitter(width = 0.1, height = 0, size = 0.25, alpha=0.1) +
+  stat_summary(color = 'black', fun.y = "mean", geom = "line", size = 1, group = 1) +
+  xlab("Subject age") +
+  ylab("Reaction time (log msec)") +
+  ggtitle("All subjects")
+@
+
+We first consider the simplest application of simple linear regression, to model a relationship between two continuous variables.  As an example, consider the relationship between \ttt{WrittenFrequency} ($x$) and \ttt{RTlexdec} ($y$) for the subset of the \ttt{english} data from \tsc{young} speakers, shown in Figure~\ref{fig:slr-ex-1} (left).
+
+% CUT: michaela comment, feels out of place.
+% We could use a correlation coefficent to characterize the degree of  linear relationship between $x$ and $y$ (see Section~\ref{sec:correlations}):
+% 
+% <<output.lines=4:11>>=
+% cor.test(~ WrittenFrequency + RTlexdec, data = english)
+% @
+% <<echo=FALSE>>=
+% ct <- cor.test(~ WrittenFrequency + RTlexdec, data = english)
+% @
+% 
+% This gives information about: the (a) {direction} of the relationship (negative) and its (b) {strength} ($|r| = \Sexpr{ct$estimate}$: `medium')---as well as measures of (c) confidence that the relationship is non-zero
+% (\Sexpr{formatP(ct$p.value)}) and of (d) the estimate's precision (95\% CI \Sexpr{paste("[",signif(ct$conf.int[1], 2),",", signif(ct$conf.int[2], 2),"]",sep='')}).
+% 
+% What a correlation doesn't let us do is (e) {prediction} of $y$ as a function of $x$, or a (f) {numerical description} of the relationship.
+% 
+% Simple linear regression results in a line of best fit (shown in Figure~\ref{fig:slr-ex-1} left), from which we can get all of (a)--(f).
+
+% 
+% % 
+% % The simplest application of simple linear regression (SLR) is to model an association between two continuous variables.
+% % 
+% % \hypertarget{example-english-data-young-participants-only}{%
+% % \subsubsection*{\texorpdfstring{Example: \texttt{english} data, young participants only}{Example: english data, young participants only}}\label{example-english-data-young-participants-only}}
+% % \addcontentsline{toc}{subsubsection}{Example: \texttt{english} data, young participants only}
+% % 
+% % \begin{itemize}
+% % \item
+% %   \(X\): \texttt{WrittenFrequency} (= predictor)
+% % \item
+% % %   \(Y\): \texttt{RTlexdec} (= response)
+% % % \end{itemize}
+% % % 
+% % % <<fig.align='center', fig.height=3, fig.width=5, warning=FALSE>>=
+% % % young <- filter(english, AgeSubject=='young')
+% % % 
+% % % ggplot(young, aes(WrittenFrequency, RTlexdec)) +
+% % %   geom_point(size=0.5)
+% % % @
+% % 
+% % A simple linear regression gives a \emph{line of best fit}:
+% % 
+% % <<r, fig.align='center', fig.height=3, fig.width=5>>=
+% % ggplot(young, aes(WrittenFrequency, RTlexdec)) +
+% %   geom_point(size=0.5) + 
+% %   geom_smooth(method="lm", se=F)
+% % @
+% % 
+% % which gives some information not captured by a correlation coefficient:
+% % 
+% % \begin{itemize}
+% % \item
+% %   Prediction of \(Y\) for a given \(X\)
+% % \item
+% %   Numerical description of relationship
+% % \end{itemize}
+% 
+% %Regression gives both types of information, and more.
+% 
+\subsection{Continuous predictor}
+\label{sec:slr-continuous-predictor}
+
+
+The mathematical form of simple linear regression, written in terms of individual observations, is:
+\begin{align}
+  y_i & = \beta_0 + \beta_1 x_i + \epsilon_i \nonumber \\
+  \epsilon_i & \sim N(0, \sigma), \quad \text{for } i = 1, \ldots, n
+  \label{eq:linreg2}
+\end{align}
+In these equations, $\beta_0$ and $\beta_1$ are \emph{coefficients}. Conventionally $\beta_0$ is called the \emph{intercept} and any other coefficient is called a \emph{slope}.  $x_i$ and $y_i$ are the value of the predictor and the response for the \(i^{\text{th}}\) observation---so the relationship between $y$ and $x$ is just a line, and deviations from this line (the \emph{error}: $\epsilon_i$) are normally-distributed and independent.
+
+%
+% \begin{itemize}
+% \item
+%   \(\beta_0, \beta_1\) are \emph{coefficients}
+% \item
+%   For the \(i^{\text{th}}\) observation
+%
+%   \begin{itemize}
+%   \item
+%     \(x_i\) is the value of the \emph{predictor}
+%   \item
+%     \(y_i\) is the value of the \emph{response}
+%   \item
+%     \(\epsilon_i\) is the value of the \emph{error} (or \emph{residual})
+%   \end{itemize}
+% \end{itemize}
+
+This is our first linear model of one (random) variable ($y$) as a function of another ($x$).  The same model, written in terms of these  variables rather than individual observations, is:
+\begin{eqnarray}
+  y & =& \beta_0 + \beta_1 x + \epsilon \nonumber \\
+  \epsilon & \sim & N(0, \sigma)
+  \label{eq:slr-2}
+\end{eqnarray}
+That is, we write variables in our model (predictors or responses) using Roman letters, and refer to actual values they take on by adding a subscript. %Greek letters are typically used for (population) values of parameters  
+(See Section~\ref{sec:global-notation} for notation conventions.)
+
+
+%% Deleted box - think it's OK
+% \begin{boxedtext}{Broader context: why use mathematical notation?}
+% In general, it can be useful in different settings to write a regression model in terms of individual observations (Eqn.~\ref{eq:linreg2}) or in terms of variables (Eqn.~\ref{eq:slr-2}).  It's easier to reason through what a model does by thinking about individual observations, while it is easier to map to actual R code using variables.  The two forms are equivalent, so you can use whichever is more helpful to you.
+% 
+% In my opinion it is important to become 
+% %However, I strongly believe that it's important to become 
+% comfortable thinking about regression models in terms of equations---in either form---rather than verbal descriptions.  
+% %Not everyone agrees with this view, including most other quantitative methods books for linguists, so let me explain.  
+% Using mathematical notation lets us describe, more precisely and concisely than using words, exactly what a regression model does. It also lets us do so in a way that is independent of the type of data being analyzed---which means that you can more easily follow up to learn about methods of interest in sources written for different audiences (psychologists, ecologists, whoever).  And it helps enormously in making regression \textbf{not} a black box:  understanding  what R is actually doing when it fits your model, the output R gives, and (most importantly) what the regression model tells you about your research question. 
+% %Using mathematical notation has the disadvantage that it's math, which can be scary or unfamiliar, if (like many linguists) you don't have a strong quantitative background.  % But I am convinced, after years of teaching this material, that ...
+% 
+% If you aren't used to reading math, it takes some time to get used to reading model equations---but you will get used to it.  Crucially, regression model equations (especially when written at the observation level) do not involve any calculus or other hard math.
+% %, like calculus.
+% %or geometry.  
+% They are just formalizing exactly what you would do to predict the outcome from the predictors given a new data point---the `generative process'. We will often go through this prediction process in examples, for practice.  The hardest part of the generative process to think about is statements involving probability distributions---like ``$\epsilon_i \sim N(0, 1)$---but this just comes down to ``this piece follows a normal distribution'': literally, executing a command like \ttt{rnorm(n=1, mean=0, sd=1)} in R. It is always possible to unpack the lines of math describing a regression model (like Eqn.~\ref{eq:slr-2}) into a series of calculations you could do, one observation at a time, given the dataset. 
+% %and a random number generator.
+% 
+% %So don't be scared by the equations---if you have passed high-school math, you can learn to do this!
+% \end{boxedtext}
+
+
+% That is, we use notation like \(X\) for a variable, and notation like \(x_5\) for actual values that it takes on.
+
+%
+% This is our first linear model of a random variable (\(Y\)) as a function of a predictor variable (\(X\)). The actual model, written not for individual observations, is written:
+%
+% \[
+%   Y = \beta_0 + \beta_1 X + \epsilon
+% \]
+
+For example, for the \ttt{english} example, the first few observations are:
+
+<<output.lines=1:5>>=
+select(english, WrittenFrequency, RTlexdec)
+@
+<<echo=FALSE>>=
+my_mat <- select(english, WrittenFrequency, RTlexdec) %>% head(n = 5)
+@
+
+
+So $x_2 = \Sexpr{my_mat[2,'WrittenFrequency']}$ and $y_2 = \Sexpr{my_mat[2,'RTlexdec']}$ are the values of the predictor ($x$) and the response ($y$) for the second observation, and so on.
+%; $y_2 = \Sexpr{my_mat[2,'RTlexdec']}$ is the value of the response ($y$) for the first observation; and so on.
+
+
+%
+% \begin{quote}
+% \textbf{Question}
+%
+% \begin{itemize}
+% \tightlist
+% \item
+%   What is \(y_5\)?
+% \end{itemize}
+% \end{quote}
+
+
+\subsection{Parameter estimation}
+\label{sec:lr-parameter-estimation}
+
+To get a line of best fit we need to estimate $\beta_0$ and $\beta_1$, which are population values, using the sample (Section~\ref{sec:population-sample}). These estimates are 
+written 
+$\hat{\beta}_0$ and $\hat{\beta}_1$.
+%(The `hat' is notation for an estimate of a parameter.)
+%
+%
+% To get a line of best fit, we want: \(\beta_0\) and \(\beta_1\), the \emph{population values}. Recall that we can't actually observe these (Section\ref{sample-population}), so we obtain \emph{sample estimates}, written \(\hat{\beta}_0, \hat{\beta}_1\).
+Given these estimates, we can plug into equation \eqref{eq:linreg2} to get \emph{fitted values} for each observation, written $\hat{y}_i$:
+\begin{equation}
+  \hat{y}_i = \hat{\beta}_0 + \hat{\beta}_1 x_i, \quad \text{for }i=1, \ldots, n
+  \label{eq:slr-fitted-values}
+\end{equation}
+
+Note that there are no errors in this equation---\(\epsilon_i\) are again population values, which we can't observe. Our estimates of the errors, given an estimated line of best fit, are the \emph{residuals}, written $\hat{\epsilon}_i$:
+\begin{equation*}
+  \epsilon_{i} = y_i - \hat{y}_i, \quad \text{for }i=1, \ldots, n
+\end{equation*}
+
+% This diagram shows the relationship between some of these quantities, for a single observation:
+%
+%\includegraphics[width=6.25in,height=\textheight]{images/slr_continuous_model.png}
+
+The most common way to estimate coefficient values is using the \emph{least-squared estimates}: the values that minimize the difference between the observed and expected values (their magnitudes:  $|\hat{\epsilon}_i|$), by minimizing the sum of the squared errors   ($\epsilon_{i}^2$).
+%The values which minimize the sum of the $\epsilon_{i}^2$ are called th (Box~\ref{box:slr-details-1}).
+
+% \begin{boxedtext}{Least-squares estimates}
+% \label{box:least-squares-estimates}
+% The least-squares estimates of $\beta_0$ and $\beta_1$ for simple linear regression are
+% \citep[e.g.,][2.5]{chatterjee2012regression}:
+% \begin{eqnarray}
+% \hat{\beta}_1 &= \frac{\sum_{i=1}^{n} (x_i - \bar{x})(y_i - \bar{y})}{\sum_{i=1}^{n}(x_i - \bar{x})^2} \\
+% \hat{\beta}_0 &= \bar{y} - \hat{\beta}_1 \bar{x},
+% \end{eqnarray}
+% where $\bar{x}$ is the average of the $x_i$ and $\bar{y}$ is the average of the $y_i$.
+%
+% From the equation for $\hat{\beta}_0$, we see that the line of best fit passes through the point $(\bar{x}, \bar{y})$---conceptually, the `average value' of the data.  One consequence is that the \textbf{least-squares estimates are easily thrown off by outliers}---observations which are very far from $\bar{x}$ or $\bar{y}$.
+%
+% The equation for $\hat{\beta}_1$ is less intuitive, but can be rewritten as:
+% $$
+% \hat{\beta}_1 = r_{xy} \frac{s_x}{s_y},
+% $$
+% where $r_{xy}$ is the (Pearson's) correlation of $x$ and $y$ (Equation~\ref{eq:pearson}), and $s_x$ and $s_y$ are estimates of the standard deviations of $x$ and $y$.  (Equation~\ref{eq:sd-estimate}, but with $n$ instead of $n-1$ in the denominator.)
+%
+% So \textbf{the slope of the regression line is essentially the correlation} between $x$ and $y$ (which lies between -1 and 1)---adjusted for the scales of $x$ and $y$.
+%
+% While the equations for multiple linear regression (and beyond) get more complicated, the basic textbfd points always hold.
+% \end{boxedtext}
+
+\paragraph{Example}
+%\label{sec:slr-example-1}
+%
+% \hypertarget{example-5}{%
+% \subsubsection*{Example}\label{example-5}}
+% \addcontentsline{toc}{subsubsection}{Example}
+
+The \ttt{lm()} function fits linear regressions, with the regression formula specified in a particular format (Box~\ref{box:formula-notation}).  This code fits a simple linear regression for our example ($y$=reaction time, $x$=word frequency) for \tsc{young} speakers in the \ttt{english} dataset:
+
+<<>>=
+english_young <- filter(english, AgeSubject == "young")
+## SLR: Simple Linear Regression
+slr_mod_1 <- lm(RTlexdec ~ WrittenFrequency, data = english_young)
+@
+
+
+The estimated coefficients for this model are:
+
+<<>>=
+coefficients(slr_mod_1)
+@
+
+The interpretations of these coefficients are:
+\begin{itemize}
+\item $\hat{\beta}_0$ (\Sexpr{signif(coefficients(slr_mod_1)[1],2)}): the predicted \ttt{RTlexdec} value when \ttt{WrittenFrequency} is 0.
+\item $\hat{\beta}_1$ (\Sexpr{signif(coefficients(slr_mod_1)[2],2)}): the predicted change in \ttt{RTlexdec} when \ttt{WrittenFrequency} is changed by 1 (a \emph{unit change}).
+\end{itemize}
+
+Substituting these values into equation \eqref{eq:slr-fitted-values} gives the regression line. 
+%Written in terms of the variables used in this example, 
+The prediction for observation $i$ is:
+\begin{equation*}
+  \text{Predicted }\ttt{RTlexdec}_i = \Sexpr{signif(coefficients(slr_mod_1)[1],2)} -  \Sexpr{abs(signif(coefficients(slr_mod_1)[2],2))} \cdot \ttt{WrittenFrequency}_i
+\end{equation*}
+
+
+\begin{boxedtext}{Practical note: Formula notation}
+\label{box:formula-notation}
+
+% cuttable
+% You don't actually have to understand why R functions require input in particular formats, but it can be helpful for conceptual understanding.
+
+The first argument of \ttt{lm()} is a \emph{formula} in R format: the tilde ($\sim$) separates the left and right-hand sides.  For regression models in R, usually the response goes on the left-hand side and predictors on the right-hand side. Formula notation is used idiosyncratically in different types of R functions, but in regression models it  makes sense: the formula looks similar to the model written in terms of variables (e.g.,\ equation~\ref{eq:slr-2}), with the conventions that the intercept and 
+%(normally-distributed) 
+error terms aren't written. The tilde makes sense because a regression model specifies a probability distribution for $y$. With some abuse of notation, we could write the simple-linear regression formula for our example as:
+$$
+\underline{\ttt{RTlexdec}} \underline{\sim} N(\beta_0 + \beta_1 \underline{\ttt{WrittenFrequency}}, \sigma)
+$$
+
+The underlined parts make up the model's formula in R format.
+
+R model formulas automatically include an intercept term, which you can also include explicitly as \ttt{1}.  So another way to write the \ttt{slr\_mod\_1} formula would be:
+$$
+\ttt{RTlexdec} \sim \ttt{1 + WrittenFrequency},
+$$
+which would correspond more closely to the distribution equation:
+$$
+\underline{\ttt{RTlexdec}} \underline{\sim} N(\beta_0 \cdot \underline{1} + \beta_1 \cdot \underline{\ttt{WrittenFrequency}}, \sigma)
+$$
+
+% R model formulas automatically include an intercept term, which would otherwise be written as \ttt{1}. To exclude the intercept, you write \ttt{-1} or \ttt{0}.
+
+\end{boxedtext}
+% 
+% % \hypertarget{hypothesis-testing-1}{%
+
+\subsection{Hypothesis testing}
+\label{sec:slr-hypothesis-testing}
+
+In addition to estimating the regression coefficients, we would like measures of uncertainty and precision in our estimates.  The least-squares estimates $\hat{\beta}_0$ and $\hat{\beta}_1$  are random variables which follow a sampling distribution, analogously to the sample mean (Section~\ref{sec:sdsm}).  $\hat{\beta}_0$ and $\hat{\beta}_1$ are normally-distributed \citep[][\S2.6]{chatterjee2012regression}, and so both have standard deviations, which we approximate by {standard errors}
+(SE)
+calculated using the sample:
+$SE(\hat{\beta}_0)$ and $SE(\hat{\beta}_1)$  (Box~\ref{box:slr-details-1}).
+
+By the same logic as for a sample mean (Section~\ref{sec:t-test-one-sample}), we can then use the estimates and their standard errors to carry out (one-sample) $t$-tests and obtain confidence intervals.  For example, for $\beta_1$, the null hypothesis is of no relationship between $x$ and $y$ ($H_0: \beta_1 = 0$), and the $t$-test has $n-2$ degrees of freedom (intuitively, because two estimates are being made using $n$ observations).  The resulting $p$-value tells us how surprised are we to get a slope this far from zero, under $H_0$.  
+%(With this high a standard error, given this much data.)  
+Since this is a $t$-test, we can also compute $t$-based 95\% confidence intervals (Section~\ref{sec:t-based-confidence-intervals}) for $\beta_1$.  Similar logic applies for  $\beta_0$.
+%(with $H_0: \beta_0 = 0$).
+
+In R, the simplest way to 
+%are different ways to
+print all this information for a fitted model 
+%The simplest way
+is to apply the \ttt{summary()} function.
+%to a fitted model.  
+For our example:
+
+<<>>=
+summary(slr_mod_1)
+@
+
+The kind of table reported after \ttt{Coefficients} is called the \emph{model table} (or `regression table', or `coefficient table').  
+
+However \ttt{summary()} also gives a lot of other output summarizing the model which we often don't need, such as the quantiles of residuals.
+%output we often don't need (discussed)
+%(As you can see by executing the line of code above.)
+It also doesn't give the confidence intervals, which we could obtain using:
+
+<<>>=
+confint(slr_mod_1)
+@
+
+For example, the 95\% CI for the \ttt{WrittenFrequency} slope is $\Sexpr{printable_ci(slr_mod_1, 'WrittenFrequency', sig_fig = 2)}$.
+Neither CI includes zero, consistent with the very low \(p\)-values in the model table above.
+
+
+\begin{boxedtext}{Practical note: Stargazing}
+The default output of \ttt{summary()} for a regression model (e.g.,\ running \ttt{summary(slr\_mod\_1)} yourself) shows `significance codes', commonly used to indicate whether $p$ is below conventional thresholds: * for $p<0.05$, ** for $p<0.01$, and so on.
+We do not show these codes in this book (by setting \ttt{options(show.signif.stars = FALSE)}) to discourage  \emph{stargazing}: interpreting only terms with $p$-values below a certain threshold as important, and models with more stars as better.
+%Not showing `stars' encourages you to not interpret $p$-values dichotomously (`significant' or not), with all the associated problems dicussed in Chapter 2.
+\end{boxedtext}
+%\emph{regression table}, or \emph{mod}
+
+A useful tidyverse function for seeing just information about coefficients, in a format suitable for further processing, is \ttt{tidy()} (from the {broom} package).  \ttt{tidy()} is very general---it usually works %(almost) 
+whenever \ttt{summary} would.  For our example:
+
+<<dependson=c('ch4-libraries')>>=
+tidy(slr_mod_1, conf.int = TRUE)
+@
+
+%We will come back later to how to report a regression model (Section~\ref{sec:reporting-mlr}).
+
+% However it is accessed, the \emph{coefficient table} gives the minimal information needed to report the regression model: the estimate, standard error, test statistic (here, $t$) and $p$-value, for $\hat{\beta}_0$ (row 1) and $\hat{\beta}_1$ (row 2).
+%
+% Having the SEs of the coefficients also lets us compute 95\% confidence intervals for the least-squared estimators. Going from the null hypothesis (\(H_0\)) above: if the 95\% CI of the slope (\(\beta_1\)) does not include 0, we can reject \(H_0\) with \(\alpha = 0.05\).
+%
+% In R, you can get confidence intervals for a fitted model as follows:
+%
+% <<>>=
+% confint(lm(RTlexdec~WrittenFrequency, young))
+% @
+%
+
+\begin{boxedtext}{Broader context: Simple linear regression---math details and intuitions}
+\label{box:slr-details-1}
+You don't need to know the formulas used for coefficient estimation and hypothesis testing, for any regression \citep[e.g.,][chap.~2]{chatterjee2012regression}.  But the mathematical details can be useful for developing intuitions, which apply to more complex models, where we can't easily write down formulas---these are bolded below.
+
+The least-squares estimates of $\beta_0$ and $\beta_1$ for simple linear regression can be written as:
+\begin{equation*}
+\hat{\beta}_1 = r_{xy} \frac{\hat{\sigma}_x}{\hat{\sigma}_y}, \quad
+%\frac{\sum_{i=1}^{n} (x_i - \bar{x})(y_i - \bar{y})}{\sum_{i=1}^{n}(x_i - \bar{x})^2} \\
+\hat{\beta}_0 = \bar{y} - \hat{\beta}_1 \bar{x},
+\end{equation*}
+where $\bar{x}$ is the average of the $x_i$, $\bar{y}$ is the average of the $y_i$,  $r_{xy}$ is the (Pearson's) correlation of $x$ and $y$ (equation~\ref{eq:pearson-sample}), and $\hat{\sigma}_x$ and $\hat{\sigma}_y$ are estimates of the standard deviations of $x$ and $y$.  (Equation~\ref{eq:sd-estimate}, but with $n$ instead of $n-1$ in the denominator.)
+
+From the equation for $\hat{\beta}_0$, we see that the line of best fit passes through the  `average value' of the data,  $(\bar{x}, \bar{y})$.  One consequence is that the \textbf{least-squares estimates are easily thrown off by outliers}---observations which are very far from $\bar{x}$ or $\bar{y}$.
+%
+% The equation for $\hat{\beta}_1$ is less intuitive, but can be rewritten as:
+% $$
+% \hat{\beta}_1 = r_{xy} \frac{s_x}{s_y},
+% $$
+% where $r_{xy}$ is the (Pearson's) correlation of $x$ and $y$ (Equation~\ref{eq:pearson}), and $s_x$ and $s_y$ are estimates of the standard deviations of $x$ and $y$.  (Equation~\ref{eq:sd-estimate}, but with $n$ instead of $n-1$ in the denominator.)
+
+The equation for $\hat{\beta}_1$ shows that \textbf{the slope of the regression line is essentially the correlation} between $x$ and $y$ (which lies between -1 and 1)---adjusted for the scales of $x$ and $y$.
+
+
+The standard errors for both estimates are related to $\sigma$, 
+%---intuitively, 
+the degree of variability in the data,
+for which an unbiased estimator is:
+\begin{equation}
+\hat{\sigma} = \sqrt{\frac{\sum_{i=1}^n \hat{\epsilon}_{i}^2}{n-2}}
+\label{eq:rss}
+\end{equation}
+The numerator sums the error across observations, and
+%the \emph{residual sum of squares} (RSS) or \emph{sum of squares due to error} (SSE), and
+$n-2$ is the degrees of freedom.
+So $\hat{\sigma}^2$ measures `average error' (a.k.a.\ \emph{mean-squared error}), and $\hat{\sigma}$ can be thought of as a measure of  error `left over': the \emph{residual standard error}, which is reported by \ttt{summary()} for a linear regression model.
+%(These quantities will come up again, and can be useful to know because they show up in R output.)
+
+The standard errors of the coefficients turn out to be:
+$$
+SE(\hat{\beta}_0) = \frac{\hat{\sigma}}{\sqrt{n}}
+\sqrt{1 + \left(\frac{\bar{x}}{\hat{\sigma}_x}\right)^2}, \quad
+%\frac{\bar{x}^2}{\sum_{i=1}^{n}(x_i - \bar{x})^2}}, \\
+SE(\hat{\beta}_1) = \frac{\hat{\sigma}}{\sqrt{n}} \frac{1}{\hat{\sigma}_x}
+%\frac{\hat{\sigma}}{\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2}}
+$$
+
+
+We can make a few observations---focusing on $\beta_1$ (we usually don't care about the intercept):
+\begin{itemize}
+\item Uncertainty in coefficient estimates increases with the noisiness of the data ($\hat{\sigma}$).
+\item Uncertainty decreases as the square root of sample size increases (Box~\ref{box:se-sample-size}).
+\item Uncertainty in the effect of a predictor $x$ (here, $\hat{\beta}_1$) decreases the wider the range of $x$ in the sample.
+\end{itemize}
+
+So  \textbf{to get more precise results about how $x$ affects $y$, we can collect more data, less noisy data, or data from a wider range of $x$}.  ``More precise results'' directly translates into lower $p$-values/narrower CIs.
+%
+% Because both $\hat{\beta}_0$ and $\hat{\beta}_1$ are normally distributed, we can get $p$-values and 95\% CIs using $t$-tests. The test statistics are
+% $$
+%  t_1  = \frac{\hat{\beta}_1}{SE(\hat{\beta}_1)}, \quad
+%  t_0  = \frac{\hat{\beta}_0}{SE(\hat{\beta}_0)}
+%  $$
+%  each with $df = n-2$, for the null hypotheses that $\beta_0 = 0$ and $\beta_1 = 0$.
+
+While the equations for multiple linear regression (and beyond) get more complicated, the basic bolded points always hold.
+
+%
+% As above, while you certainly don't need to remember the formulas underlying hypothesis testing for simple linear regression (or any regression), they can be useful for developing intuitions, which apply to more complex models (where we can't easily write down such formulas).
+
+\end{boxedtext}
+%
+% ---
+% Using
+% are proportional to $\sigma$, the (unknown) standard deviation of the errors, which   don't show these formulas, but both standard errors are proportional to $\sigma$, the (unknown)
+%
+% ---
+% \end{boxedtext}
+
+
+\subsection{Example: Small subset}
+\label{sec:example-small-subset}
+
+
+It is a little silly to compute $p$-values and 95\% CIs for the full  \texttt{english} dataset for young speakers, given how much data there is---the line of best fit has a tiny confidence interval.  Let's look at a line of best fit for a subset of just \(n=25\) points (Figure~\ref{fig:young-subset-1}), corresponding to this simple linear regression:
+
+<<young-subset-1, out.width='45%', fig.width=default_fig.width*.45/default_out.width, echo=1:3, fig.cap="Reaction time versus word frequency (as in Figure~\\ref{fig:slr-ex-1} left), for a subset of 25 points from young speakers in the \\ttt{english} dataset. Line and shading are least-squares line of best fit and 95\\% CI.">>=
+set.seed(2903)
+young_sample <- english_young %>% sample_n(25)
+
+slr_mod_2 <- lm(RTlexdec ~ WrittenFrequency, data = young_sample)
+
+ggplot(young_sample, aes(WrittenFrequency, RTlexdec)) +
+  geom_point() +
+  geom_smooth(color='black', method = "lm") +
+  labs(x = "Frequency",
+       y = "Reaction time\n(log msec)")
+@
+
+%The \ttt{lm} argument to \ttt{geom\_smooth} results in a plot of 
+% 
+% <<eval=FALSE>>=
+% slr_mod_2 <- lm(RTlexdec ~ WrittenFrequency, data = young_sample)
+% @
+
+<<echo=FALSE>>=
+slr_mod_2 <- lm(RTlexdec ~ WrittenFrequency, data = young_sample)
+coeff_string <- slrCoeffReport(slr_mod_2, "WrittenFrequency", 2)
+@
+%In the plot, 
+
+The shading around the line is the 95\% confidence interval, and ``can we reject \(H_0\)?'' is equivalent to asking, ``can a line with 0 slope cross the shaded area through the range of \(x\) (and going through $(\bar{x}, \bar{y})$)?''  Although the exact line is uncertain, we can be confident that its slope is negative, as reflected by the $p$-value and 95\% CI for \ttt{WrittenFrequency} in the coefficient table:
+
+<<dependson=c('ch4-libraries')>>=
+tidy(slr_mod_2, conf.int = TRUE) %>%
+  select(term, statistic, p.value, conf.low, conf.high)
+@
+
+% % 
+% % It is common to report results of simple linear regressions
+% % <<>>=
+% % 
+% % @
+% % \Sexpr{coeff_string}
+% %(\ttt{WrittenFrequency}: \Sexpr{slrCoeffReport(slr_mod_2, 'WrittenFrequency', 2)}).
+% 
+% % 
+% % 
+% % \begin{quote}
+% % \textbf{Questions}:
+% % 
+% % \begin{itemize}
+% % \tightlist
+% % \item
+% %   What does \texttt{geom\_smooth(method="lm")} do?
+% % \end{itemize}
+% % \end{quote}
+% 
+% % In this plot, the shading around the line is the 95\% confidence interval. ``Can we reject \(H_0\)?'' is equivalent to asking, "Can a line with 0 slope cross the shaded area through the range of \(x\) (and going through (mean(\(X\)), mean(\(Y\)))?
+% 
+
+\subsection{Goodness of fit}\label{sec:goodness-of-fit}
+
+Figures \ref{fig:slr-ex-1} (left) and \ref{fig:young-subset-1} plot the lines of best fit from the models we have discussed, on top of empirical data.   We often want a metric quantifying how well a model fits the data---the \emph{goodness of fit}.
+
+%
+% Here is the model we have been discussing, plotted on top of the empirical data:
+%
+% <<fig.align='center', fig.height=3, fig.width=5>>=
+% young <- filter(english, AgeSubject == "young")
+%
+% ggplot(young, aes(WrittenFrequency, RTlexdec)) +
+%   geom_point(size=0.25) +
+%   geom_smooth(method="lm") +
+%   theme_bw()
+% @
+
+For simple linear regression, we can derive such a metric as follows \citep[e.g.,][\S2.9]{chatterjee2012regression}. For each observation,
+%we can think of
+the amount of variation (deviation from the grand mean) can be partitioned into pieces explained and not explained by the model: %(adapted from C\&H 2.9):
+\begin{equation}
+\underbrace{(y_i - \bar{y})}_{\text{deviation from mean}} = \underbrace{(\hat{y}_i - \bar{y})}_{\text{deviation explained by model}} + \underbrace{(y_i - \hat{y}_i)}_{\text{remaining deviation (`residual')}}
+\label{eq:slr-partition-1}
+\end{equation}
+
+Summing each piece across all observations, we define  three quantities:
+\begin{align}
+TSS  &=  \sum_{i=1}^{n} (y_i - \bar{y})^2  & \emph{total sum of squares} \label{eq:tss-def}
+\\
+ESS & =  \sum_{i=1}^n (\hat{y}_i - \bar{y})^2 & \emph{explained sum of squares}
+\label{eq:ess-def}
+\\
+RSS & =  \sum_{i=1}^n (y_i - \hat{y}_i)^2 &  \emph{residual sum of squares}
+\label{eq:rss-def}
+\end{align}
+
+%
+% \begin{enumerate}
+% \item Difference between observation and the sample mean (`total' error) `
+% \item Difference between model prediction and the mean (error `explained' by the model)
+% \item Difference between observation and model prediction (`residual')
+% \end{enumerate}
+% For each observation, (1) = (2) + (3) (by definition), as schematized for an observation in Figure FUTURE
+
+It is a remarkable property of linear regression that the same relationship that holds for individual observations (equation~\ref{eq:slr-partition-1}) holds across the whole sample:
+%(holds \textbf{across all observations}:
+$$
+TSS = ESS + RSS
+$$
+%
+%
+%
+% \begin{itemize}
+% \item
+%   \emph{SST}: Total sum of squares
+% \item
+%   {\emph{SSR}}: Sum of squares due to regression
+% \item
+%   {\emph{SSE}}: Sum of squares due to error
+% \end{itemize}
+
+%\includegraphics{images/slr_quality_of_fit.png}
+%
+% % (Source: slides from \emph{Business Statistics: A First Course (Third edition)})
+%
+% The fundamental equality is:
+% \emph{SST} = {\emph{SSR}} + {\emph{SSE}}
+
+This relationship can be used to give a measure of goodness of fit: how much of the total variance in the data (TSS) is explained by the model (ESS):
+% Intuitively, we want a measure of how much of the total variance in the data (TSS) is explained by the model ()
+% Intuitively we want a measure of how much of SST is accounted for by SSR.
+%This is $R^2$:
+\begin{equation}
+  R^2 = \frac{ESS}{TSS}
+  %\frac{SS_{\text{fit}}}{SS_{\text{total}}}
+  \label{eq:r2-def}
+\end{equation}
+
+For simple linear regression, $R^2$ is (a) the \textbf{proportion of total variability in $y$ explained} by $x$.  $R^2$ lies between 0 (no variance explained) and 1 (all variance explained).
+%
+%\(R^2\) always lies between 0 and 1, which can conceptually be thought of as:
+%
+% \begin{itemize}
+% \tightlist
+% \item
+%   0: none of the variance in \(Y\) is accounted for by \(X\)
+% \item
+%   1: all of the variance \texttt{}
+% \end{itemize}
+%
+It turns out \(R^2\) is also the square of:
+\begin{itemize}
+\item[(b)] Pearson's \textbf{correlation between predictor and response} ($r_{xy}^2$: equation~\ref{eq:pearson-sample}).
+\item[(c)] The \textbf{correlation between observed and fitted values} ($\text{cor}(y, \hat{y})$).
+\end{itemize}
+
+Interpretations (a)--(c) are useful in different settings, and hold across all linear regression models.  
+%For other regression models there will be no coefficient with all three properties.
+%In R, 
+$R^2$ is printed at the bottom of the \ttt{summary()} output for a linear regression,
+%(as "Multiple R-squared"), 
+or can be extracted directly:
+<<>>=
+summary(slr_mod_2)$r.squared
+@
+
+
+% %Here $R^2 = \Sexpr{signif(summary(slr_mod_2)$r.squared,2)}$.   
+% 
+% 
+% % 
+% % \hypertarget{example-6}{%
+% % \subsubsection*{Example}\label{example-6}}
+% % \addcontentsline{toc}{subsubsection}{Example}
+% % 
+% % Here is the SLR model fitted to a subset of 100 data points, repeated for convenience:
+% % 
+% % <<>>=
+% % set.seed(2903)
+% % 
+% % d <- english %>% filter(AgeSubject=="young") %>% sample_n(100)
+% % summary(lm(RTlexdec~WrittenFrequency, d))
+% % @
+% % 
+% % In the model table, note the values of the sample statistic under \texttt{t\ value} and its significance in the \texttt{Pr(\textgreater{}\textbar{}t\textbar{})} column in the \texttt{WrittenFrequency} row, as well as of the correlation statistic \texttt{Multiple\ R-squared}.
+% % 
+% % This is a hypothesis test for Pearson's \(r\) for the same data, checking whether it is significantly different from 0:
+% % 
+% % <<>>=
+% % cor.test(d$WrittenFrequency, d$RTlexdec)
+% % @
+% % 
+% % Note that \(t\), \(p\), and \(r\) (the square root of \texttt{Multiple\ R-squared}) are exactly the same. Thus, fitting a simple linear regression and conducting a correlation test give us two ways of finding the same information.
+% 
+% 
+\subsection{Categorical predictor}\label{categorical-predictor}
+\label{sec:slr-categorical}
+
+Simple linear regression easily extends to the case of a binary predictor $x$ (a two-level factor).
+% \(X\) (a \emph{factor}).
+
+For example, we can model the relationship between \ttt{AgeSubject} ($x$) and \ttt{RTlexdec} ($y$) for the \ttt{english} data, shown in  Figure~\ref{fig:slr-ex-1} (right). We now have:
+\begin{itemize}
+\item
+  \(x_i = 0\): if \texttt{AgeSubject} = \tsc{young}
+\item
+  \(x_i = 1\): if \texttt{AgeSubject} = \tsc{old}
+\end{itemize}
+
+Everything else is the same as for the case where $x$ is continuous (Section~\ref{sec:slr-continuous-predictor}), including 
+the 
+%except now 
+regression equation for observation $i$ (equation~\ref{eq:linreg2}):
+$$
+y_i  = \beta_0 + \beta_1 x_i + \epsilon_i
+$$
+
+Only the interpretation of the coefficients differs:
+\begin{itemize}
+\item $\beta_0$: {mean} \ttt{RTlexdec} when \ttt{AgeSubject}=\tsc{young} (because $x_i = 0$)
+\item $\beta_1$: {difference in means} of \ttt{RTlexdec} between \tsc{old} and \tsc{young}
+\end{itemize}
+
+Hypothesis tests, \(p\)-values, CIs, and goodness of fit work the same as for a continuous predictor (Section~\ref{sec:slr-hypothesis-testing}).
+
+We would fit this model as follows in R:
+
+<<>>=
+slr_mod_3 <- lm(RTlexdec ~ AgeSubject, data = english)
+tidy(slr_mod_3)
+@
+
+<<echo=FALSE>>=
+slr_mod_3 <- lm(RTlexdec ~ AgeSubject, data = english)
+slr_mod_3_report <- slrCoeffReport(slr_mod_3, "AgeSubjectold", 3)
+@
+
+%Examining its coefficients (e.g., \ttt{tidy(slr\_mod\_3)}), 
+The model suggests that \tsc{young} speakers have significantly longer reaction time than \tsc{old} speakers: \Sexpr{slr_mod_3_report}.
+
+\begin{boxedtext}{Broader context: Simple linear regression equivalences}
+\label{box:slr-equivalences}
+
+Conceptually, simple linear regression with a binary predictor 
+%(with two levels) 
+does the same thing as a two-sample $t$-test: tests the difference between two groups in the value of a continuous variable.  In fact, the two are equivalent, as we can see by carrying out the equivalent \(t\)-test to model \ttt{slr\_mod\_3}:
+
+<<output.lines=4:8>>=
+t.test(RTlexdec ~ AgeSubject, data = english, var.equal = TRUE)
+@
+
+(The \texttt{var.equal} option forces the \(t\)-test to assume equal variances in both groups, which is an assumption of linear regression we'll return to later: Section~\ref{sec:constancy-variance-assumption}.)
+
+The results ($t$, $p$, $df$, CIs) are identical to the regression results. (Except that $t$/CIs have reversed sign, because \ttt{t.test()} ignores our releveling of the \tsc{AgeSubject} factor, which doesn't matter for our point.) (except for reversed sign, which doesn't matter).
+%\footnote{The $t$-test estimates the \tsc{young}-\tsc{old} difference, because it ignores our releveling of the \tsc{AgeSubject} factor, so $t$/estimate/CIs have the opposite sign. This doesn't matter for our point.}   
+So, a \(t\)-test can be thought of as a special case of simple linear regression.
+%(modulo the equal variance assumption).
+
+Similarly, the hypothesis test of interest for simple linear regression with a continuous predictor (for the slope) does conceptually the same thing as Pearson's correlation---tests whether there is an association between $x$ and $y$.
+The two are almost equivalent, as we can see by carrying out a hypothesis test for Pearson's $r$ for the data used for the Section~\ref{sec:example-small-subset} example, testing whether it is significantly different from 0:
+
+<<output.lines=4:11>>=
+cor.test(young_sample$WrittenFrequency, young_sample$RTlexdec)
+@
+
+\(t\), \(p\), and \(r\) 
+%(the square root of \texttt{Multiple\ R-squared})
+are exactly the same as for \ttt{slr\_mod\_2} (shown in Sections \ref{sec:example-small-subset}--\ref{sec:goodness-of-fit})---so a correlation test and a simple linear regression are equivalent ways of testing for an association between (continuous) $x$ and $y$. The correlation test can be thought of as a `subset' of the regression model: the regression gives the same information, but also lets us predict $y$ as a function of $x$.
+%\footnote{In addition, regressions have an inherent `direction', while correlations do not, but since we usually can't actually prove causality ($x \to y$, as opposed to $y \to x$) this distinction is just a matter of interpretation.}
+\end{boxedtext}
+% Deleted, but reasonable text:
+% 
+% Because of these equivalences, you can report a simple linear regression model in text in a  similar way to a $t$-test (Section~\ref{sec:reporting-hypothesis-tests}); you just include the regression coefficient as an effect size, and its standard error as a measure of variability. This is the simplest application of the guidelines for model reporting    An example for \ttt{slr\_mod\_3} is given above (end of Section~\ref{sec:slr-categorical}).
+% % example is given at the end of For example, for the result of model \ttt{slr_mod_3} above, going by the guidelines in ...
+% % \begin{itemize}
+% % \item Minima report: ...
+% % \item Maximal report: ...
+% % \end{itemize}
+
+%...: anything else to say here?
+%\end{boxedtext}
+%
+%
+% Suppose we want to test whether the difference in group means is statistically significantly different from 0:
+%
+% <<fig.align='center', fig.height=4, fig.width=3>>=
+% english %>% ggplot(aes(AgeSubject, RTlexdec)) +
+%   geom_boxplot() +
+%   stat_summary(fun.y="mean", geom="point", color="blue", size=3) +
+%   theme_bw()
+% @
+%
+% \begin{quote}
+% \textbf{Question}:
+%
+% \begin{itemize}
+% \tightlist
+% \item
+%   What goes in the blanks?
+% \end{itemize}
+% \end{quote}
+%
+% <<eval=F>>=
+% m1 <- lm(_____ ~ _____, english)
+% summary(m1)
+% @
+%
+% Note the \(t\) and \(p\)-values for \texttt{AgeSubjectyoung}, we'll need them in a second.
+%
+% \hypertarget{slr-with-a-binary-categorical-predictor-vs.-two-sample-t-test}{%
+% \subsection{\texorpdfstring{SLR with a binary categorical predictor vs.~two-sample \(t\)-test}{SLR with a binary categorical predictor vs.~two-sample t-test}}\label{slr-with-a-binary-categorical-predictor-vs.-two-sample-t-test}}
+%
+% Conceptually, we just did the same thing as a two-sample \(t\)-test---tested the difference between two groups in the value of a continuous variable. Let's see what the equivalent \(t\)-test gives us:
+%
+% <<>>=
+% t.test(RTlexdec ~ AgeSubject, english, var.equal=T)
+% @
+%
+%
+% You should find that both tests give identical \(t\) and \(p\)-values. So, a \(t\)-test can be thought of as a special case of simple linear regression.
+
+
+
+\section{Multiple linear regression}
+\label{sec:multiple-linear-regression}
+
+In \emph{multiple linear regression}, we use a linear model to predict a continuous response with $k$ predictors $k>1$.  Analogously to
+equation \eqref{eq:slr-2} for simple linear regression:
+\begin{eqnarray}
+  y & =& \beta_0 + \beta_1 x_1 + \beta_2 x_2 +
+  \cdots + \beta_k x_k  + \epsilon \nonumber \\
+  \epsilon & \sim & N(0, \sigma)
+  \label{eq:mlr-1}
+\end{eqnarray}
+
+Each predictor $x_i$ can be continuous or categorical, and there are now $k$ coefficients to be estimated.  Least-squares estimation 
+%turns out to 
+generalizes
+%nicely
+from single to multiple linear regression \citep[e.g.,][chap.~3]{chatterjee2012regression}, giving:
+\begin{itemize}
+\item Estimates of the coefficients ($\hat{\beta}_1, \ldots, \hat{\beta}_k$);
+\item Standard errors, $p$-values, and 95\% CIs for each coefficient (using $t$-tests with $n-k-1$ degrees of freedom).
+\end{itemize}
+
+\subsection{Example}
+\label{sec:mlr-ex-1}
+
+For the \ttt{english} data, let's model (lexical decision) reaction time as a function of word frequency and participant age.  
+%
+%Recall that \ttt{RTlexdec} decreases with \ttt{WrittenFrequency} and \ttt{AgeSubject} (Figure~\ref{fig:slr-ex-1}).
+%time decreases with word frequency and speaker age, 
+%according to the regressions and plots in previous sections.
+%
+% \hypertarget{ex1}{%
+% \subsubsection*{Example: RT \textasciitilde{} frequency + age}\label{ex1}}
+% \addcontentsline{toc}{subsubsection}{Example: RT \textasciitilde{} frequency + age}
+%
+% For \protect\hyperlink{engdata}{the \texttt{english} dataset}, let's model reaction time as a function of word frequency and participant age. Recall that in addition to the word frequency effect, older speakers react more slowly than younger speakers:
+%
+% <<fig.align='center', fig.height=4, fig.width=4>>=
+% english %>% ggplot(aes(AgeSubject, RTlexdec)) +
+%   geom_boxplot() +
+%   stat_summary(fun.y="mean", geom="point", color="blue", size=3) +
+%   theme_bw()
+% @
+%
+In this model, the response $y$ is \texttt{RTlexdec}.  The two predictors are \ttt{WrittenFrequency} ($x_1$) and \ttt{AgeSubject} ($x_2$: \tsc{old}=0, \tsc{young}=1).
+
+Because there are two predictors ($k=2$),  the regression equation for observation \(i\) is:
+\begin{equation}
+y_i = \beta_0 + \beta_1 x_{i1} + \beta_2 x_{i2} + \epsilon_i,
+\label{eq:mlr-p2-obs}
+\end{equation}
+where $x_{ij}$ means `the \(j^{\text{th}}\) predictor for the \(i^{\text{th}}\) observation'.
+
+To fit the model we again use \ttt{lm()}:
+
+<<mlr_mod_1_def>>=
+mlr_mod_1 <- lm(RTlexdec ~ WrittenFrequency + AgeSubject, 
+  data = english)
+@
+
+We can summarize its results using \ttt{summary()} and \ttt{confint()} (or just \ttt{tidy()}):
+
+<<output.lines=8:17>>=
+summary(mlr_mod_1)
+@
+<<>>=
+confint(mlr_mod_1)
+@
+
+
+
+<<mlr_tab, echo=FALSE, dependson=c('ch4-libraries', 'mlr_mod_1_def')>>=
+mlr_tab_1 <- tidy(mlr_mod_1) %>% mutate(estimate = signif(estimate, 2))
+test <- mlr_tab_1[1, "estimate"]
+@
+
+
+This model tells us that the least-squares solution for the regression line is:
+\[
+  \texttt{RTlexdec} = \underbrace{\Sexpr{mlr_tab_1[1,'estimate']}}_{\hat{\beta}_0} + \underbrace{\Sexpr{mlr_tab_1[2,'estimate']}}_{\hat{\beta}_1} \cdot \texttt{WrittenFrequency} + \underbrace{\Sexpr{mlr_tab_1[3,'estimate']}}_{\hat{\beta}_2} \cdot \texttt{AgeSubject}
+\]
+
+For example, for observation 3, where \texttt{WrittenFrequency} = 6.5 and \texttt{AgeSubject} = \tsc{young}, the model predicts:
+\begin{align*}
+\ttt{RTlexdec} & = \Sexpr{mlr_tab_1[1,'estimate']} +
+( \Sexpr{mlr_tab_1[2,'estimate']} \cdot 6.5 ) +
+( \Sexpr{mlr_tab_1[3,'estimate']} \cdot 0 ) \\
+& = \Sexpr{signif(mlr_tab_1[1,'estimate'] + mlr_tab_1[2,'estimate']*6.5 + mlr_tab_1[3,'estimate']*0,2)}
+\end{align*}
+
+You can make such model predictions automatically using the \ttt{predict()} function, which works for different kinds of regression models.
+%in R.  
+For example, the predicted value for the third observation is:
+
+<<>>=
+predict(mlr_mod_1, english[3, ])
+@
+
+Or we can predict for new observations:
+
+<<>>=
+## Four new observations:
+expand.grid(AgeSubject = c("young", "old"), 
+  WrittenFrequency = c(5, 6)) %>%
+## Add model predictions for each observation
+  mutate(prediction = predict(mlr_mod_1, newdata = .))
+@
+
+\ttt{expand.grid()}, or analogous functions in tidyr (see \ttt{?expand}), 
+makes a dataframe 
+%or its tidyverse equivalent \ttt{expand}, make a dataframe 
+with  all combinations of listed variables.
+
+
+\paragraph{Interpretation of coefficients}
+
+In a multiple linear regression, the interpretation of the coefficients is:
+\begin{itemize}
+\item Intercept ($\beta_0$): predicted value of $y$ when all predictors are held at 0 ($x_1=0$, $x_2=0$, $\ldots$).
+\item Slope $k$ (e.g.,\ $\beta_1$): predicted change in $y$ for a unit change in the $k$th predictor, when other predictors are held constant.
+\end{itemize}
+% Note that in this MLR model, the interpretation of each coefficient is:
+%
+% \begin{itemize}
+% \item
+%   \(\beta_0\): predicted value when all predictors = 0
+% \item
+%   \(\beta_1\), \(\beta_2\): change in a predictor \textbf{when others are held constant}
+% \end{itemize}
+
+
+In the example above, \tsc{young} speakers are predicted to have reaction times \tsc{\Sexpr{abs(mlr_tab_1[3,'estimate'])}} faster than \tsc{old} speakers, when word frequency is held constant.
+
+%
+% For example, the difference between old and young speakers in RT is 0.221, when word frequency is held constant.
+
+\hypertarget{goodness-of-fit-metrics}{%
+\subsection{Goodness of fit metrics and significance}\label{sec:goodness-of-fit-metrics}}
+
+
+The \emph{residual standard error} (RSE) is one measure of goodness of fit---it is $\hat{\sigma}$ (equation~\ref{eq:rss}), the model's estimate of the variance of the error term, so it measures how much variance in $y$ is `left over' in the units of the predictor.  RSE is an `unstandardized effect size' (Section~\ref{sec:effect-size-types}), so its advantage is interpretability in terms of the actual predictor value (which is useful if the units are meaningful), and the disadvantage is that interpreting it requires understanding what values on the scale of the predictor mean.
+
+The \emph{multiple $R^2$} is just $R^2$ defined exactly as for simple linear regression.  The formulas for sums of squares (equations~\ref{eq:tss-def}--\ref{eq:rss-def}) work regardless of the number of predictors, so we can again use this equation to quantify the `proportion of variance explained' in $y$ by all predictors together:
+$$
+R^2 = \frac{ESS}{TSS}
+$$
+
+%This value is called \emph{multiple $R^2$}: the proportion of variance in $y$ that is explained by all predictors together.  
+%Compared to other goodness of fit metrics, 
+Multiple $R^2$ is most widely used goodness-of-fit metric, and has the advantages of a `standardized effect size' (Section~\ref{sec:effect-size-types}): it doesn't depend on the problem domain, and has a straightforward interpretation.
+%(`proportion of variation explained').  
+It has the important disadvantage that it always increases as more predictors are added to a model. Adding predictors increases `explained variance' (ESS), even when a predictor in reality has no effect on the response ($\beta_i = 0$).
+%more predictors---add more predictors to a model will explain more variance, just by chance.
+
+%We can define $R^2$ exactly as for simple linear regression:
+
+%
+% With \(R^2\) defined as for simple linear regression, in terms of sums of squares, the exact same measure works to quantify goodness of fit of a multiple linear regression:
+% \[
+%   R^2 = \frac{SS_{\text{fit}}}{SS_{\text{total}}}
+% \]
+% sometimes called \emph{multiple \(R^2\)}.
+
+This issue is addressed by an alternative to $R^2$,  \emph{adjusted \(R^2\)}, defined as:
+\begin{equation*}
+  R^2_a = 1 - \frac{ESS/(n - p - 1)}{TSS/(n - 1)}
+\end{equation*}
+%where \(p\) is the number of predictors and \(n\) is the number of observations.
+
+% FUTURE: use example in comments, or give exercise.
+% young_sample$rand <- rbinom(nrow(young_sample), size=1, prob=0.5)
+% now lm with just WrittenFrequency, versus WF + rand
+
+This expression is
+%can be 
+%In this expression, the sum-of-squares term can be 
+%thought of as 
+a ratio comparing the amount of variance explained by two models: the `full' model (with \(p\) predictors) and the `baseline' model (with just the intercept). Each model's sum of squares is scaled by its degrees of freedom, which is
+%intuitively, 
+%this gives
+a measure of how much variance is explained {given the number of predictors}.
+%(We expect that if you throw more predictors in a model, more variance can be explained, just by chance.)
+This property makes adjusted $R^2$ more appropriate than $R^2$ for comparing different models 
+%so it's discussed more when we discuss model selection
+(Section~\ref{sec:lm-model-comparison}).
+% The adjusted \(R^2\) measure only increases if the \(p\) additional predictors improve the model more than would be expected by chance.
+The disadvantage of adjusted $R^2$ is that it no longer has the nice interpretation, `percentage of variation explained'.
+
+The  \ttt{summary()} output for a linear regression reports all three of these measures (as in the Section~\ref{sec:mlr-ex-1} example): 
+RSE, multiple $R^2$, and adjusted $R^2$.
+
+\paragraph{Example}
+%\label{sec:mlr-mod-2}
+
+Consider a simple linear regression of the effect of \ttt{voicing} on vowel duration in the \ttt{neutralization} data used in the last chapter.
+%(Section~\ref{sec:neutralization-data}).  
+To fit and summarize this model (output not shown):
+
+<<eval=FALSE>>=
+mlr_mod_2 <- lm(vowel_dur ~ voicing, data = neutralization)
+summary(mlr_mod_2)
+@
+
+<<echo=FALSE>>=
+mlr_mod_2 <- lm(vowel_dur ~ voicing, data = neutralization)
+## repeated from last chapter so this one compiles alone
+@
+
+%$\Delta \mu =  \Sexpr{diff_means}$ msec and
+%$d = \Sexpr{ex1$estimate}$.
+%% FUTURE: don't hard-code these in, but also don't require chap. 3 to have been compiled first. (There were compilation issues at some point because diff_means and ex1 defiend in Chapter 3.)
+We know that the \ttt{voicing} effect is small (same as the $t$-test result in Section~\ref{sec:effect-size-types}: 9.1 msec, Cohen's $d$ = 0.21)---the research question underlying the study is whether there is an effect at all (`incomplete neutralization')!  But the goodness-of-fit measures give us some extra ways to think about this, besides the effect's size and $p$-value.  Let's extract these measures using another handy tidyverse function, \ttt{glance()} (from the {broom} package), which extracts model summary numbers---all of which we have seen, or will see
+%in a useful form (a dataframe)---most 
+%of which we will see 
+in later chapters:
+%\footnote{The \ttt{width=Inf} argument forces all columns of the tibble to be printed, instead of the default to print a manageable number.}
+
+<<>>=
+glance(mlr_mod_2)
+@
+
+Focusing on the first three columns:
+%glance(mlr_mod_2) %>% select(sigma, r.squared, adj.r.squared)
+\begin{itemize}
+\item Multiple $R^2$ (\ttt{r.squared}): \ttt{voicing} explains just 1\% of variance in vowel duration
+\item Adjusted $R^2$ (\ttt{adj.r.squared}): \ttt{voicing} is only expected to improve \textbf{prediction} of vowel duration (for new observations) by 0.9\%, relative to a model where we just always predict the mean value.
+\item Residual standard error (\ttt{sigma}): this value is large in practical terms, for this kind of data (Section~\ref{sec:in-context}). It is also almost the same as the standard deviation of the original variable
+(\ttt{vowel\_dur}: $s = \Sexpr{sd(neutralization$vowel_dur)}$), indicating that little variance is explained.
+
+\end{itemize}
+
+
+% 
+% 
+% 
+% % FUTURE: move adjusted R2 measure to model selection section in next chapter (see Faraway around p. 155).
+% % 
+% % 
+% % \begin{itemize}
+% % \item
+% %   \textbf{Pro}: Adjusted \(R^2\) is more appropriate as a metric for comparing different possible model---unlike ``multiple \(R^2\)'', adjusted \(R^2\) doesn't automatically increase whenever new predictors are added.
+% % \item
+% %   \textbf{Con}: Multiple \(R^2\) is no longer interpretable as ``fraction of the variation accounted for by the model''.
+% % \end{itemize}
+% 
+% % R reports both adjusted and non-adjusted versions, as seen in the model summary above.
+% 
+
+\section{Interactions}
+\label{sec:lr-interactions}
+
+The multiple regression models considered so far
+%The models we have considered so far
+assume that each predictor affects the response {independently}. For example, the multiple regression example above  (\ttt{mlr\_mod\_1})
+%: Section~\ref{sec:mlr-ex-1}) 
+assumes that the slope of the frequency effect on reaction time is the same for \tsc{old} and \tsc{young} subjects.
+%speakers as for young speakers.  %This 
+%: \ttt{\protect\hyperlink{c2ex1}{the example above} (\texttt{RT\ \textasciitilde{}\ frequency\ +\ age}),
+%our model assumes that the slope of the frequency effect on reaction time is the same for old speakers as for young speakers. 
+This looks like it might be approximately true, in that both groups of speakers show a similarly negative  slope (Figure~\ref{fig:ixn-ex-1} left).  
+%That is, a model of the form in equation \eqref{eq:mlr-p2-obs} seems approximately correct.
+
+<<ixn-ex-1, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap="Empirical summaries of effects of two predictors on a response.  Left (\\ttt{english} data): line of best fit for word frequency effect on reaction time, for each subject age group. (95\\% CIs are included, but are invisible due to high sample size.)  Right (\\ttt{neutralization} data): mean and 95\\% bootstrapped CI for each combination of consonant voicing and prosodic boundary presence.", echo=FALSE>>=
+english %>%
+  ggplot(aes(WrittenFrequency, RTlexdec)) +
+  geom_point(size = 0.2, color='darkgrey', alpha=0.5) +
+  geom_smooth(color=default_line_color, method = "lm", aes(color = AgeSubject)) +
+  labs(x = "Frequency",
+       y = "Reaction time\n(log msec)")
+
+neutralization %>%
+  ggplot(aes(x = voicing, y = vowel_dur, shape = prosodic_boundary)) +
+  stat_summary(fun.data = "mean_cl_boot", geom = "pointrange") +
+  stat_summary(geom = "line", aes(group = prosodic_boundary, lty=prosodic_boundary)) +
+  labs(x = "Voicing",
+       y = "Vowel duration (msec)",
+       lty = "Prosodic\nboundary", shape = "Prosodic\nboundary")
+@
+
+% in that there seems to be a similarly negative slope for both groups. That is, a model of this form seems approximately correct:
+% \[
+%   Y = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \epsilon
+% \]
+% (\(\epsilon\) = error).
+
+Figure~\ref{fig:ixn-ex-1} (right) shows an example from the \ttt{neutralization} data where the independence assumption isn't necessarily true: vowel duration ($y$: \ttt{vowel\_dur}) as a function of consonant voicing ($x_1$: \ttt{voicing}---of primary interest) and presence of a prosodic boundary ($x_2$: \ttt{prosodic\_boundary}).  
+
+Just from this empirical plot,
+%summarizing the empirical data, 
+it looks
+like the effect of voicing  on vowel duration may be higher for words with a following prosodic boundary.  In this case, we say there is an \emph{interaction} between voicing and prosodic boundary: the value of one predictor modulates the effect of the other. This interaction is modeled by adding an extra coefficient to the regression equation (\eqref{eq:mlr-p2-obs}), for the product of $x_1$ and $x_2$:
+\begin{equation*}
+  y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_3 x_1 x_2 + \epsilon
+\end{equation*}
+(where $\epsilon \sim N(0, \sigma)$).  In a model with interaction terms, the non-interaction terms are called \emph{main effects}.
+
+Note that the middle terms can be rewritten as:
+\begin{equation*}
+\beta_1 x_1 + \beta_2 x_2 + \beta_3 x_1 x_2 =
+\beta_2 x_2 + \underline{(\beta_1 + \beta_3 x_2)} x_1
+\end{equation*}
+
+
+The underlined term shows that the interaction coefficient ($\beta_3$)  modulates the slope of $x_1$: depending on the value of $x_2$, $x_1$  has a different effect on $y$.  Equivalently, the interaction coefficient can be interpreted as how much the effect of $x_2$ changes depending on $x_1$:
+\begin{equation*}
+\beta_1 x_1 + \beta_2 x_2 + \beta_3 x_1 x_2 =
+\beta_1 x_1 + \underline{(\beta_2 + \beta_3 x_1)} x_2
+\end{equation*}
+
+Whichever interpretation makes more sense for one's research questions can be chosen. For the \ttt{neutralization} example, since \ttt{voicing} ($x_1$) is of primary interest, it makes sense to think of the interaction as `how does prosodic position modulate the effect of voicing?'
+
+\subsection{Example}
+\label{sec:ixn-example}
+
+%For the \ttt{neutralization} example above, 
+Let's fit the model described above. 
+%et's fit a model to estimate how much the \ttt{voicing} effect differs by \ttt{prosodic\_boundary}.
+%and the statistical significance of the difference. 
+$x_1$ and $x_2$ are coded as:
+\begin{itemize}
+\item \ttt{voicing}: \tsc{voiced} = 0, \tsc{voiceless} = 1
+\item \ttt{prosodic\_boundary}:  \tsc{no} = 0, \tsc{yes} = 1
+\end{itemize}
+
+%To fit the model:
+
+<<mlr_mod_3_chunk, echo=1:2>>=
+mlr_mod_3 <- lm(vowel_dur ~ prosodic_boundary + voicing +
+    voicing:prosodic_boundary, data = neutralization)
+
+# Write out since needed in later chapters, to avoid compilation issues
+saveRDS(mlr_mod_3, file = paste("objects/", "mlr_mod_3.rds", sep = ""))
+@
+
+In an R model formula, \texttt{x1:x2} means `interaction between \texttt{x1} and \texttt{x2}'.  The notation \ttt{x1*x2}, which  expands automatically to \ttt{x1 + x2 + x:x2}, means `this interaction and all lower-order terms' (Box~\ref{box:lower-order-terms}).
+%between \ttt{x1} and \ttt{x2} and all lower-order terms'; 
+%it expands automatically to \ttt{x1 + x2 + x:x2}.   
+So the model above could also be written:
+
+<<eval=FALSE>>=
+lm(vowel_dur ~ voicing * prosodic_boundary, data = neutralization)
+@
+
+<<echo=FALSE>>=
+mlr_mod_3_tab <- mlr_mod_3 %>% tidy(conf.int = TRUE)
+@
+
+% 
+% \begin{verbatim}
+% lm(RTnaming ~ WrittenFrequency * AgeSubject, english)
+% lm(RTnaming ~ WrittenFrequency + AgeSubject + WrittenFrequency:AgeSubject, english)
+% \end{verbatim}
+% 
+% To fit a model including an interaction between frequency and age:
+% 
+% <<>>=
+% m3 <- lm(RTnaming ~ WrittenFrequency * AgeSubject, english)
+% @
+
+Of interest is the \ttt{prosodic\_boundaryyes:voicingvoiceless} row in the model table:
+
+<<dependson=c('mlr_mod_3_chunk'), size='small', echo=1>>=
+tidy(mlr_mod_3) %>% select(term, estimate, p.value)
+mlr_tab_3 <- mlr_mod_3 %>% tidy(conf.int = TRUE) %>% data.frame()
+@
+
+The negative value of the interaction coefficient means `the difference between $x_1$=1 and $x_1$=0' (here, \tsc{voiceless}-\tsc{voiced}) is smaller when $x_2$=1 (here, \tsc{yes} prosodic boundary).  Put in more intuitive terms: the difference between \tsc{voiced} and \tsc{voiceless} stops is predicted to be \Sexpr{abs(mlr_tab_3[4,'estimate'])} msec larger when there is a following prosodic boundary; this difference is statistically significant at the $\alpha=0.05$ level (\Sexpr{formatP(mlr_tab_3[4,'p.value'])}).
+%but the precision of the estimate is low (95\% CI: [-25, -0.1]).
+
+Just for exposition, let's work out the model's prediction for an observation with \ttt{prosodic\_boundary}=\tsc{no} and \ttt{voicing}=\tsc{voiceless}:
+%---where we abbreviate prosodic boundary as \ttt{pb}:
+\begin{align*}
+\hat{y} &= \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \beta_3 x1 x_2 \\
+%\beta_{\text{voicing}} \cdot \ttt{voicing} + \beta_{\text{pb}} \cdot \ttt{pb} +  \beta_{\text{voicing:pb}} \cdot \ttt{voicing} \cdot \ttt{pb} \\
+& = \Sexpr{signif(mlr_tab_3[1,'estimate'],2)} + 
+\Sexpr{mlr_tab_3[3,'estimate']} \cdot 1  + 
+\Sexpr{mlr_tab_3[2,'estimate']} \cdot 0 + 
+\Sexpr{mlr_tab_3[4,'estimate']} \cdot 0 \cdot 1 \\
+& = \Sexpr{predict(
+            mlr_mod_3, 
+          newdata=data.frame(prosodic_boundary='no', voicing='voiceless'
+          )
+          )}
+\text{ msec} 
+\end{align*}
+
+To make such predictions automatically we would use \ttt{predict} (Exercise~\ref{ex:neutralization-prediction}).
+
+% 
+% \begin{quote}
+% \textbf{Questions}:
+% 
+% \begin{itemize}
+% \item
+%   What does it mean that this coefficient is positive?
+% \item
+%   For this regression model including an interaction, what is the model for an observation with \texttt{WrittenFrequency=3} and \texttt{AgeSubject==\textquotesingle{}old\textquotesingle{}}? \protect\hyperlink{c2sol1}{Solution}.
+% \item
+%   What is the model for an observation with \texttt{WrittenFrequency=3} and \texttt{AgeSubject==\textquotesingle{}young\textquotesingle{}}? \protect\hyperlink{c2sol2}{Solution}.
+% \end{itemize}
+% \end{quote}
+% 
+% \begin{boxedtext}{Practical note: factors, formulas, and interactions}
+% 
+% It can be useful to know a little about how R model formulas automatically deals with factors and intercepts.
+% 
+% R model formulas automatically include an intercept term, which would otherwise be written as \ttt{1}. To exclude the intercept, you write \ttt{-1} or \ttt{0}.
+% So the following pairs of formulas are equivalent:
+% \begin{align*}
+% \ttt{RTlexdec} \sim 1 + \ttt{WrittenFrequency}, \quad
+% \ttt{RTlexdec} \sim \ttt{WrittenFrequency} \\
+% \ttt{RTlexdec} \sim 0 + \ttt{WrittenFrequency}, \quad
+% \ttt{RTlexdec} \sim -1 + \ttt{WrittenFrequency}
+% \end{align*}
+% 
+% If your model only has continuous predictor, all it means to `exclude' the intercept is that the intercept coefficient is forced to be zero ($\beta = 0$).  Excluding the intercept means something different if your model contains categorical predictors (factors). 
+
+%Formula notation is used idiosyncratically in different types of R functions, but in regression models it kind of makes sense---the left-hand side is predicted as a function of things on the right-hand side
+%\end{boxedtext}
+
+\begin{boxedtext}{Broader context: Lower-order terms}
+\label{box:lower-order-terms}
+
+R automatically adds lower-order terms (\ttt{x1}, \ttt{x2}) when an interaction (\ttt{x1*x2}) is added to a model because an interaction term does not typically make sense otherwise \citep[][\S14.3.1]{baguley2012serious}. 
+With the lower-order terms, \ttt{x1:x2} has a `moderator' interpretation: How does \ttt{x1} change the effect of \ttt{x2}?  Without one or both lower-order terms, \ttt{x1:x2} doesn't have a straightforward interpretation.  By the same logic, including a three-way \ttt{x1*x2*x3} interaction in a model entails including all lower-order interactions as well (\ttt{x1:x2}, \ttt{x1:x3}, \ttt{x2:x3}, \ttt{x1}, \ttt{x2}, \ttt{x3}), and so on. With these terms included, the \ttt{x1:x2:x3} coefficient has a clear (if complex) interpretation: how does \ttt{x3} change the degree by which \ttt{x2} modifies the effect of \ttt{x1}?  The number of lower-order terms is one reason why four-way or higher interactions are rare in practice, and it's best to interpret three-way interactions using additional tools (introduced in Section~\ref{sec:interpreting-interactions}) rather than examining coefficients.
+
+The logic described above is sometimes called the \emph{hierarchy principle}: including an interaction term in a model entails including all the lower-order terms.
+
+\end{boxedtext}
+
+\subsection{Visualizing interactions}
+
+\label{sec:model-predictions-intro}
+
+%As the preceding example shows, 
+Interpreting interaction terms directly from a model table is possible but confusing. Making plots is indispensable for interpreting interactions.  And more generally, visualizing the predictions made by a model is often the easiest way to understand it. 
+
+\subsubsection{Option 1: Plotting model predictions}
+
+
+Visualizing a model's predictions is a topic we'll return to several times in this book, demonstrating different methods. 
+%As of 2021,
+Good packages exist for many common cases of making model predictions---including the {effects} and {sjPlot}/{ggeffects} packages \citep{fox2019r,sjPlot,ggeffects} as of this writing---so we will often use such packages in this book rather than making model predictions `from scratch'.\footnote{It is also useful to know how to make predictions yourself from scratch, as pre-existing packages make various assumptions and don't always give exactly what you want, but we return to this later (e.g.,~Sections~\ref{sec:mlr-ex-1}, \ref{sec:pred-rand-eff}).}
+% sec:mlr-ex-1
+%In particular we will use \ttt{sjPlot} (or its `workhorse' \ttt{ggeffects}) whenever possible to minimize the number of new packages introduced.
+%While the \ttt{effects} package is the most commonly used R package for effect plotting in practice, \ttt{sjPlot} works better with tidyverse functions, and understanding the underlying principles is what's most important.}
+
+% In general, making plots is indispensable for interpreting interactions. It is possible, with practice, to interpret interactions from the regression table, but examining a good plot is usually also necessary and much faster.
+
+Two useful kinds of model prediction plots are:
+\begin{itemize}
+\item \emph{Partial effect plots}: these show the model’s prediction as one predictor is changed, holding others constant.
+\item \emph{Interaction plots}: these show the model's predictions as 2+ predictors are changed.
+\end{itemize}
+
+For example, we can use \ttt{plot\_model()} from  {sjPlot} package to make partial effect plots for the two main effects from model \ttt{mlr\_mod\_3} of the \ttt{neutralization} data
+%above (\ttt{mlr\_mod\_3}) 
+(plots not shown):
+
+<<eval=FALSE>>=
+plot_model(mlr_mod_3, type = "pred", terms = c("voicing"))
+plot_model(mlr_mod_3, type = "pred", terms = c("prosodic_boundary"))
+@
+
+The same function can be used to plot the predicted \ttt{voicing:prosodic\_boundary} interaction (Figure~\ref{fig:mlr-mod-3-plots} left):
+
+<<eval=FALSE>>=
+plot_model(mlr_mod_3,
+  type = "pred",
+  terms = c("voicing", "prosodic_boundary"),
+  title = "Model predictions"
+)
+@
+
+<<mlr-mod-3-plots, echo=FALSE, fig.asp=.34, out.width='90%', fig.width=default_fig.width*.9/default_out.width, fig.cap="Two plots for interpretation of the \\ttt{voicing}:\\ttt{prosodic\\_boundary} interaction.  Left: model predictions with 95\\% CIs for model \\ttt{mlr\\_mod\\_3}. Right: empirical means and 95\\% CIs.">>=
+
+p1<-plot_model(
+    mlr_mod_3, 
+    type = "pred", 
+    terms = c("voicing", "prosodic_boundary"), 
+    title = "Model predictions",
+    color = "bw", show.legend = F
+  ) + 
+#  scale_color_discrete() + # resets colors to default
+  labs(x = "Voicing",
+       y = "Vowel duration (msec)",
+       color = "Prosodic\nboundary", shape = "Prosodic\nboundary")
+
+p2<-neutralization %>%
+  ggplot(aes(x = voicing, y = vowel_dur, shape = prosodic_boundary)) +
+  stat_summary(
+    fun.data = "mean_cl_boot",
+    geom = "pointrange"
+  ) +
+  stat_summary(
+    fun.data = "mean_cl_boot",
+    geom = "errorbar", width = .1
+  ) +
+  ggtitle("Empirical data") +
+  labs(x = "Voicing",
+       y = "Vowel duration (msec)",shape = "Prosodic\nboundary")
+
+p1 + p2 + plot_layout(guides = "collect")
+
+@
+  
+  
+\subsubsection{Option 2: Empirical summaries}
+
+Another way to visualize an interaction between variables is with relevant plots of the {empirical} data, summarizing the data's distribution as 2+ predictors vary.    For example, for the \ttt{voicing:prosodic\_boundary} interaction, we could make the plot shown in  Figure~\ref{fig:mlr-mod-3-plots} right,  showing the means and 95\% CIs for each combination of voicing and prosodic boundary in the \ttt{neutralization data}.  (Remember that we do not show ggplot2 code in text, but all plotting code is in the code file for this chapter.)
+%(Figure~\ref{fig:mlr-mod-3-plots} right):
+% 
+% <<eval=FALSE>>=
+% neutralization %>%
+%   ggplot(aes(x = voicing, y = vowel_dur)) +
+%   stat_summary(fun.data = "mean_cl_boot", aes(color = prosodic_boundary)) +
+%   ggtitle("Empirical data")
+% @
+
+
+% In later chapters we will cover how to actually visualize model predictions---exactly what the model predicts for different combinations of predictor values. 
+% 
+% <<fig.align='center', fig.height=3, fig.width=5>>=
+% english %>% ggplot(aes(WrittenFrequency, RTnaming)) +
+%   geom_smooth(method='lm', aes(color=AgeSubject)) +
+%   xlab('Log written frequency') +
+%   ylab('Naming RT in log(s)')
+% @
+
+
+It is {very} useful to know how to make such empirical plots for
+%(using \ttt{ggplot2} or another package) 
+for understanding data generally.  But for current purposes, what's important is that this kind of empirical interaction plot often gives a reasonable approximation of the model's predictions.   In the examples in Figure~\ref{fig:mlr-mod-3-plots}, they are nearly identical.   Although 
+%in general 
+you should take empirical plots less seriously than model prediction plots (Box~\ref{box:predictions-empirical}), empirical plots are often easier to make, and serve as useful sanity checks.
+
+
+\begin{boxedtext}{Practical note: Model predictions or empirical plots?}
+\label{box:predictions-empirical}
+When interpreting a regression model or 
+%(especially)
+writing it up for publication, is it better to show  model predictions or empirical plots? %This is a surprisingly contentious question, which comes up a lot in practice (e.g.,\ journal reviewers).  
+%For example, two reviewers of this book strongly disagreed with an earlier draft that suggested the latter, while reviewers on several papers strongly argued for the former.  The underlying issue here is---how much do we need or trust complex statistical models, versus patterns anyone can see (the `eye test')?
+
+At first glance the answer seems obvious: model prediction plots are clearly better for summarizing your model, because empirical plots don't show the actual results of the model. In particular, empirical plots don't do the main thing we are fitting a statistical model for: controlling for other predictors.  It is very easy to make empirical plots that suggest an effect is present, when it is in fact not significantly different from null when even the simplest statistical analysis is applied. 
+%The `eye test' can easily be wrong. 
+%quantifying evidence for particular  effects of interest (including uncertainty in the effects) while controlling for other predictor. Especially for unbalanced data, simple empirical plots can often look quite different from model predictions, and are misleading as to what the model predicts.
+
+The counter-argument appeals to common sense: empirical plots serve as a sanity check.  They are more intuitive, and we would like to see a model's predictions `come out' in empirical data to have confidence that something isn't wrong (e.g.,\ a data processing bug, using the wrong model).  If we make the appropriate
+%\textbf{right} 
+empirical plot and see qualitative disagreement with model predictions, it is very often a sign that something is wrong.  Especially as you fit more complex models, it is easy to get a significant `result' that is in fact an artifact of something about the data (e.g.,\ a few influential points resulting from annotation error) that would emerge in careful exploratory plots. 
+%Empirical plots are also just much easier to make than true model prediction plots, especially for more complex models we cover later.
+
+My personal opinion is that model prediction plots are `better' (similarly to \citealp[][\S5.2.6.3]{gries2021statistics}), but making and cross-checking both kinds of plots is important when writing up results---whichever one goes in the actual paper.  (It is also fine to include both kinds of plots, if you have space.)
+\end{boxedtext}
+
+\subsubsection{Why the difference matters}
+
+In general, while examining empirical plots is good practice, model prediction plots are necessary to actually interpret your model, and the two kinds of plots can lead to different conclusions.
+%lead to different conclusions from empirical plots.
+%examining empirical plots is good practice and helps as a sanity check of model predictions, but model prediction plots are necessary to actually interpret your model, and can lead to very different conclusions. 
+This is an important point because it is common
+%especially among researchers who do not work with quantitative data or 
+%work only with data from controlled experiments,  
+to advocate `just plotting the data' 
+%(or the `eye test') 
+as primary over statistical modeling.  
+
+As a simple example where the distinction matters, suppose we add a single term to the model above: \ttt{accent\_type}, which is 0 if the word has pre-nuclear accent and 1 if it has nuclear accent.  It would make sense to control for this variable, because it is highly correlated with \ttt{prosodic\_boundary} and the two are conceptually related.
+%(both pertain to word-level prosody). 
+To fit the model:
+
+<<>>=
+## Exclude very infrequent accent_type (n=11) for this example
+neut_sub <- filter(neutralization, accent_type != "deaccented")
+
+## Relevel factor so that accented (nuclear) > unaccented (prenuclear)
+neut_sub <- mutate(neut_sub, accent_type = relevel(accent_type, 
+  "prenuclear"))
+mlr_bad_mod_1 <- lm(vowel_dur ~ prosodic_boundary * voicing + 
+    accent_type, data = neut_sub)
+@
+
+From the coefficient table alone, it looks like we would make a similar conclusion about the interaction as in the previous model:
+<<>>=
+mlr_bad_mod_1 %>%
+  tidy(conf.int = TRUE) %>%
+  select(term, estimate, p.value)
+@
+
+
+<<mlr-bad-mod-plots, echo=FALSE, fig.asp=.34, out.width='90%', fig.width=default_fig.width*.9/default_out.width,  fig.cap="Two plots for interpretation of the \\ttt{voicing}:\\ttt{prosodic\\_boundary} interaction in model \\ttt{mlr\\_bad\\_mod\\_1}, which includes \\ttt{accent\\_type}. Left: model predictions with 95\\% CIs.  Right: empirical means and 95\\% CIs.  ">>=
+p1 <- plot_model(
+  mlr_bad_mod_1,
+  type = "pred",
+  terms = c("voicing", "prosodic_boundary"),
+  title = "Model predictions",
+  color='bw', show.legend = F
+  ) + 
+#  scale_color_discrete() + # resets colors to default
+  labs(y="Vowel duration (msec)", "Voicing", color = "Prosodic\nboundary")
+
+p2 <-neut_sub %>%
+  ggplot(aes(x = voicing, y = vowel_dur)) +
+  stat_summary(
+    fun.data = "mean_cl_boot", 
+    aes(shape = prosodic_boundary),
+    geom = "pointrange") +
+  stat_summary(
+    fun.data = "mean_cl_boot",
+    aes(shape = prosodic_boundary),
+    geom = "errorbar", width = .1) +
+  ggtitle("Empirical data") +
+  labs(y="Vowel duration (msec)", "Voicing", color = "Prosodic\nboundary")
+
+p1 + p2 + plot_layout(guides = "collect")
+@
+
+The same is true if we just looked at the empirical plot corresponding to this interaction (Figure~\ref{fig:mlr-bad-mod-plots} right).
+However, making the model prediction plot for the interaction (Figure~\ref{fig:mlr-bad-mod-plots} left) shows a very different picture from the previous model---there seems to be huge uncertainty about predicted vowel duration for observations which aren't before a prosodic boundary. And just based on the errorbars, it seems odd that the \ttt{voicing}:\ttt{prosodic\_boundary} interaction is statistically significant. These oddities should spur us to investigate further.  In fact, what is going here results from very high correlation between \ttt{accent\_type} and \ttt{prosodic\_boundary},
+%% FUTURE: maybe expore this further in collinearity example
+and points to a real issue with this data that our model didn't take into account. (Namely, it's not possible in this data to disentangle the effects of accent type and prosodic boundary.)  
+
+The point here is just that if we examined the empirical summary alone we would have missed important information from the fitted model, which is crucial for our research question.
+
+
+\subsection{Releveling factors for model interpretability}
+\label{sec:releveling-factors-interpretability}
+
+R automatically puts the levels of factors into alphabetical order when loading data.    It is often useful to change this ordering, so that the resulting regression coefficients have interpretations that are more intuitive---like changing \ttt{AgeSubject} so \tsc{young} comes before \tsc{old} (Section~\ref{sec:english-dataset})---or correspond better to research questions the data is being used to address.
+
+% 
+% For example, for the \ttt{AgeSubject} factor in \ttt{english}, \tsc{old} $<$ \tsc{young} by default,  so we had to 
+% 
+% <<eval=FALSE>>=
+% levels(english$AgeSubject)
+% @
+% This is why in the \ttt{english} data, $x=0$ and $x=1$ mean `\ttt{AgeSubject}=\tsc{old}' and `\ttt{AgeSubject}=\tsc{young}' by default.
+
+For example, for the \ttt{neutralization} example modeling the interaction between \ttt{voicing} and \ttt{prosodic\_boundary} (Section~\ref{sec:ixn-example}), by default  the \ttt{voicing} factor orders \tsc{voiced} before \tsc{voiceless} (alphabetical). Thus:
+\begin{itemize}
+\item The \ttt{voicing} coefficient 
+%($\beta_1$) 
+means `\tsc{voiceless}$-$\tsc{voiced}'.
+\item The \ttt{voicing:prosodic\_boundary}  coefficient  means `change in (\tsc{voiceless} $-$ \tsc{voiced}) depending on presence of a prosodic boundary'.
+\end{itemize}
+(The lowest level is the \emph{base level}, here \tsc{voiced}.) 
+
+But we expect the response (\ttt{vowel\_dur}) to be higher for \tsc{voiced} than \tsc{voiceless}, and the \tsc{voiced}$-$\tsc{voiceless} difference (the amount of `incomplete neutralization': IN) is of primary interest for this data.
+%data---let's call this quantitity $\Delta$.  
+So it makes more sense for the base level to be \tsc{voiceless}.  The interpretations of the two coefficients above would now be:
+\begin{itemize}
+\item Amount of IN
+\item How much IN increases due to the presence of a prosodic boundary
+\end{itemize}
+We would expect both coefficients to be positive.
+% \begin{itemize}
+% %\item $\beta_0$: vowel duration for \tsc{voiceless} and no prosodic boundary
+% \item $\beta_1$: 
+% %\item $\beta_2$: `prosodic boundary$-$no boundary difference'
+% \item $\beta_3$: how much $\Delta$ increases due to the presence of a prosodic boundary
+% \end{itemize}
+% 
+% Making \tsc{voiceless} the base level would reverse the signs of the \ttt{voicing} and \ttt{voicing:prosodic\_boundary} coefficients from the 
+% Doing this would reverse the signs of $\beta_1$ and $\beta_3$ from the model fitted in Section ...---we expect both coefficients to be the same, but positive.  
+
+
+We can reorder factor levels using \ttt{relevel()}, and refit model \ttt{mlr\_mod\_3} from Section~\ref{sec:ixn-example} using \ttt{update()}, a useful function for refitting a model with only certain pieces changed:
+
+<<>>=
+neutralization <- neutralization %>%
+  mutate(voicing = relevel(voicing, "voiceless"))
+
+# Refit model using new 'neutralization' dataframe
+# . ~ . means "same model formula"
+mlr_mod_4 <- update(mlr_mod_3, . ~ ., data = neutralization)
+@
+The coefficient estimates are now:
+<<>>=
+tidy(mlr_mod_4) %>% select(term, estimate)
+@
+
+Comparing to the coefficients of \ttt{mlr\_mod\_3}, the \ttt{voicing} and \ttt{voicing:prosodic\_boundary} coefficients have the same magnitudes but are now positive instead of negative, as expected.
+
+\section{Reporting a  linear regression model}
+\label{sec:reporting-mlr}
+
+There are two parts to reporting a multiple linear regression model in a write-up: individual coefficients, and the whole model.  The general principles are similar to reporting hypothesis tests and parameter estimates (Section~\ref{sec:reporting-hypothesis-tests}).
+
+\subsection{Coefficients}
+
+Each regression coefficent corresponds to a parameter estimate and a hypothesis test, so you minimally report sufficient information to interpret these. The most common minimum is:
+\begin{itemize}
+\item[(a)] Regression \textbf{coefficient estimate} $\hat{\beta}$, and its (b) \textbf{standard error} $SE(\hat{\beta})$.
+%\item[(b)] Standard error ($SE(\hat{\beta}$)
+\item[(c)] \textbf{Test statistic} value, and (d) corresponding \textbf{$p$-value}.
+\end{itemize}
+
+Note that $\hat{\beta}$ is an effect size/parameter estimate and $SE(\hat{\beta})$ is its corresponding measure of variability (4.\ and 6.\ from Section~\ref{sec:reporting-hypothesis-tests}). The $df$ for each coefficient's $t$-test is the same ($n-p-1$), so it is usually just reported once (see below) or not at all (it can be inferred from the sample size and number of terms in the regression).
+% each coefficient is often just reported in a regressioAlthough $df$ would be needed to interpret the $t$-test corresponding to each coefficient, $df$ is the same for each coefficient ($n-p-1$) so it can just be reported once some this is instead  it is $df =  n -p - 1$ (\#2 from ) recall that $df = n-p-1$ ( between sample size and number of coefficients) as long as its value is given somewhere in the writeup  or can be inferred ($df = n - p$:) give degrees of freedom for the test statistic for linear regressions, because they are known ($df = n - p$) assuming they are known for a standard case is standard (for a linear regression: $df = n-p$) or doesn't exist (for a logistic regression, where a $Z$-test will be used).
+% % \item[(d)] Degrees of freedom (if applicable)
+
+
+It is strongly recommended 
+to report
+% (a)--(d) for 
+\textbf{all} coefficients for a multiple regression model, in a table.  A full table (which could be in an appendix, or an online repository) is needed for your writeup to meet the APA Manual standard of ``sufficient information to help the reader fully understand the analyses conducted...'' (quoted in Section~\ref{sec:reporting-hypothesis-tests}).
+%the analyses conducted and possible alternative explanations for the outcomes of those analyses'' \citep[][33]{apa6th}.
+%(APA guide other researchers can't use your model for prediction. 
+This table could be just the output of \ttt{summary} or \ttt{tidy}, but formatted more nicely (Example 1 below).  Individual coefficients can be highlighted in the text (Example 2 below).
+
+Besides (a)--(d), it is also nice to give (by the same logic as in Section~\ref{sec:reporting-hypothesis-tests}):
+\begin{itemize}
+\item[(e)] \textbf{Visualizations}---especially for interactions and effects of primary interest---either using model prediction or empirical plots.
+\item[(f)] \textbf{Confidence intervals} for the coefficients.
+\item[(g)] Basic \textbf{descriptive statistics} (e.g.,\ mean and SD of $y$ for each level of factor $x$; correlation of $y$ with continuous $x$).
+\end{itemize}
+
+It is neither possible nor effective to report all of (a)--(g) for every effect in a paper, or even effects of primary interest.  In a very short paper you may not even be able to report more than (a)--(d) for the effects which directly address your research questions.  Exactly how you report regression models is a matter of writing and context, determined both by what is important to convey given the details of your study, and by personal style. For example: if the important effects for your research questions are all interactions, you probably need visualizations to unpack these effects; if only main effects are of interest, you may not need visualizations. If the null hypothesis is obviously wrong for your effect of interest, and/or you are following recommendations to de-emphasize statistical significance in statistical reporting, you could report 95\% CIs but not $p$-values.  
+
+% Conventions for quantitative reporting in linguistics and psychology are still in flux.\footnote{For example, the regression table examples given in the APA style guide (Tables 5.12--5.15) look quite different from those published in most articles I've read.}
+% %that examples of regression tables given in the APA  and I don't know of authoritative models---for example,  examples in the  find the examples given in the APA guide helpful
+Like other kinds of writing, a good way to develop your voice is using relevant papers as models, and seeking guidance from colleagues or written sources that
+%(e.g.,\ quant-savvy colleagues, or written sources)
+you trust.
+%quantitatively-savvy readers.
+%reading some papers you like and working from them as a model. 
+
+% 
+% Strongly suggested to report full results in a table.  (APA, Field?)  can highlight/discuss particular results in text.  (If space doesn't permit a full table, use an appendix or supplemental materials online.)  
+\subsection{Model summaries}
+
+It is common to report some quantitative summaries of the model: its goodness of fit ($R^2$, adjusted-$R^2$, $\hat{\sigma}$ and associated $df$: Section~\ref{sec:goodness-of-fit-metrics}); or measures of model likelihood or `information' ($F$-test, AIC, BIC, log-likelihood, deviance; introduced later---Section~\ref{sec:lm-model-comparison}); or number of parameters ($p$) and observations ($n = df + p$).  Some of these are reported by \ttt{summary()}, and most are reported by \ttt{glance()}.
+
+
+Whichever summaries are used, they are reported at the bottom of the regression table.  There is no standard set to report.  In linguistics (including my own work), sometimes no summaries are reported, which probably isn't a good option.  At a minimum we should probably report  $R^2$ and $\hat{\sigma}$ and its residual $df$ (as complementary measures of goodness of fit); as well as $n$ (which can also be given in the text)---as in Example 1 below.\footnote{Here we have just suggested the most common summaries used by sources cited in this chapter (e.g.,\ \citealp{faraway2015linear}, \citealp{chatterjee2012regression}, \ttt{summary}, \ttt{tidy}).}  As for individual coefficients, different summaries make sense depending on your study and the analysis being carried out.
+
+%\subsection{Examples}
+
+\paragraph{Example 1}
+
+
+<<echo=FALSE>>=
+mlr_mod_3_summ <- mlr_mod_3 %>% glance()
+@
+
+
+A possible regression table for the model in Section~\ref{sec:ixn-example}:
+\begin{tabular}{lcrrr}
+\toprule 
+Coefficient & $\hat{\beta}$ & $SE(\hat{\beta})$ & $t$ & $p$ \\
+<<echo = FALSE, warning=FALSE, message=FALSE, results = 'asis'>>=
+tidy(mlr_mod_3) %>%
+  select(one_of("estimate", "std.error", "statistic", "p.value")) %>%
+  add_column(
+    coeff = c("Intercept", "Prosodic boundary", "Voicing", "PB:Voicing"),
+    .before = 1
+  ) %>%
+  printWrapper(pCol = "p.value")
+@
+\multicolumn{5}{l}{$R^2 = \Sexpr{signif(mlr_mod_3_summ$r.squared,2)}$,
+Residual SE  = \Sexpr{signif(mlr_mod_3_summ$sigma,2)} ($df = \Sexpr{mlr_mod_3_summ$df.residual}$), $n = \Sexpr{mlr_mod_3_summ$df.residual + mlr_mod_3_summ$df}$}
+\end{tabular}
+
+\paragraph{Example 2}
+
+Possible in-text reports of coefficients for the model in Section~\ref{sec:mlr-ex-1}:
+\begin{quote}
+Words with higher frequencies had significantly decreased reaction time (\Sexpr{slrCoeffReport(mlr_mod_1, 'WrittenFrequency',2)}). Old speakers (mean RT: \Sexpr{signif(mean(filter(english, AgeSubject=='old')$RTlexdec),2)}) had significantly longer reaction times than young speakers (mean RT: \Sexpr{signif(mean(filter(english, AgeSubject=='young')$RTlexdec),2)}): \Sexpr{slrCoeffReport(mlr_mod_1, 'AgeSubjectold',2)}.
+\end{quote}
+
+%% somewhat redundant / implied by rest of section -- Michaela
+%In-text reports (for any regression model) just need to give enough information to interpret the result in the context of the prose, and shorter can be better. For example, if you are already reporting a regression table somewhere where $t$-statistics and $df$ are shown, the in-text report can just give the estimate, standard error, and $p$-value, and omit the $t$-statistic part; $t$ is just $\hat{\beta}/SE({\hat{\beta}})$ anyway.\footnote{This is because we are doing one-sample $t$-tests---see Section~\ref{sec:t-test-one-sample}.}  If you are not reporting a full regression table somewhere, you are stuck with including all of (a)--(d) in text.
+
+% English MLR 2 model (just report both in text)
+
+\paragraph{Simple linear regression}
+
+Reporting a simple regression model is a special case of reporting a multiple regression model where there is only one coefficient. In this case a regression table may be overkill and just reporting in text can make sense, especially if space is limited.
+
+\section{Other reading}\label{sec:other-reading-ch4}
+
+The topics in this chapter are covered in introductions to regression modeling, including \citet[][chap.~1--3]{faraway2015linear}, \citet[][chap.~1--3]{chatterjee2012regression}, \citet[][chap.\ 3]{gelman2007data}, or to general statistics
+(e.g.,\ \citealp[][chap.\ 15]{NavarroOnline};
+%\citet[][chap.\ 1]{wood2017generalized} (clear but technical),
+\citealp[][chap.\ 7]{field2012discovering}).
+%(non-technical).
+For linguistic data specifically, \citet[][chap.\ 4, 6, 11]{winter2019statistics} and \citet[][chap.\ 5]{gries2021statistics} give particularly extensive introductions from a complementary perspective; most sources listed in the preface give briefer introductions \citep[e.g.,][\S6.1--6.2]{baayen2008analyzing}.
+%\citet{johnson2008quantitative}.
+%briefer introductions \citep[e.g.,][]{baayen2008analyzing,gries2021statistics,johnson2008quantitative}.
+
+
+% 
+% 
+% For each term:
+% - regression coefficient estimate (= effect size)
+% - test statistic 
+% - df (if applicable)
+% - p.value
+% 
+% In addition it is standard to report *measure of variability*:
+% - standard error
+% 
+% All of these are necessary, to XX. (same as for hyp tests.)  These are all given by tidy() or summary().  (However a full model table takes a lot of space; in this book we will usually only show some of these, as needed for the case at hand.)
+% 
+% % Often formatting (bold, or asterisks) is used to highlight rows with $p$ below a certain threshold. It's not clear whether this is a good idea.\footnote{For example, summary() uses asterisks to indicate whether a $p$-value falls below several thresholds (./*/**/*** = 0.1/0.05/0.01/0.001). This makes the coefficient table more readable, but encourages `stargazing' (focusing on rows with stars) and hence the bad tendencies of $p$-values: dichotomous thinking, and focusing on statistical significance as 'importance' to exclusion of other criteria (substantive significance, effect size, precision).}
+% 
+% besides that, many optional things are great:
+% 
+% By same logic as for hypothesis tests; CIs are great. These would go in model table (if reporting for all terms), or in text w/ rest of results.
+% Basic descriptive statistics are also great (e.g., mean and SD of each group, for a categorical predictor; r between a continuous predictor and ); these can go in text with results, or earlier (before statistical analysis).  
+% 
+% Visualizations are good -- especially for interaction effects and effects of primary interest -- can be effect or empirical plots.
+% 
+% It's neither possible nor effective to report all of these components for *every* effect in a paper, or even effects of primary interest.  Exactly how you report regression models, beyond the minimum, is a matter of writing -- depends what you want to convey, and personal taste.  And conventions in lingusitics are still in flux. Like other kinds of writing, a good way to develop your voice is reading some papers you like,  working from them as a model. 
+
+% 
+% \begin{boxedtext}{Stargazing}
+% The one thing not discussed above that you will see in most regression model tables is the use of formatting to highlight rows with low $p$-values---whether using bold (to indicate $p<0.05$) or asterisks to indicate whether a $p$-value falls below several thresholds (by convention, ./*/**/*** = 0.1/0.05/0.01/0.001).  The summary() method does this by default.  Opinions differ on whether this is good---it makes tables more readable, and the asterisks option encourages readers to not just dichotomize results (as $p<0.05$ or not). But it also encourages `stargazing' (scanning for rows with low $p$), which encourages bad tendencies of $p$-values: dichotomous thinking (there is nothing special about 0.01 versus 0.03), ignoring null results, focusing on statistical significance as 'importance' to exclusion of other criteria (substantive significance, effect size, precision).
+% \end{boxedtext}
+
+
+% 
+% 
+% \begin{itemize}
+% \item
+%   \textbf{Pros}: Empirical plots are more intuitive, and if you have a robust effect it should probably show up in an empirical plot.
+% \item
+%   \textbf{Cons}: Empirical plots don't show actual model predictions, and in particular don't control for the effects of other predictors.
+% \end{itemize}
+
+
+% 
+% - No standard on which ones to report.  In linguistics (including my own work) often none reported.  this probably isn't a good option.    Looking at a few sources (C\&H, Faraway, stargazer..), good minimum probably:
+% - R2
+% - n
+% - RSE
+% - df
+% 
+% 
+% 
+% 
+
+% same basic logic on reporting as discussed for hypothesis tests.  (so actually we can be much briefer here.)  every row here is a little hypothesis test, so similar *minimum* as discussed in 2.8.1:
+
+% 
+% For the *whole regression*:
+% - common to report some model summaries: from goodness of fit (above), or various measures used in model selection (discussed in next chapter: F-test/df, AIC, BIC, log-likelihood, deviance), n  Some of these are printed at bottom of R summary(), others by glance().
+% 
+% - No standard on which ones to report.  In linguistics (including my own work) often none reported.  this probably isn't a good option.    Looking at a few sources (C\&H, Faraway, stargazer..), good minimum probably:
+% - R2
+% - n
+% - RSE
+% - df
+% 
+% R2 and RSE (with df) measure goodness of fit.  n is just good to know.
+% 
+% Some examples:
+% 
+% - English MLR 2 model (table)
+% 
+% - Reporting effects of interest in text:
+
+
+
+
+% \hypertarget{categorical-factors-with-more-than-two-levels}{%
+% \subsection{Categorical factors with more than two levels}\label{categorical-factors-with-more-than-two-levels}}
+% 
+% We are often interested in categorical predictors with more than two levels. For example, for the \protect\hyperlink{dregdata}{Dutch \texttt{regularity} data}, we might wonder whether the size of a verb's morphological family size is affected by what auxiliary it takes in the past tense.
+% 
+% <<fig.align='center', fig.height=4, fig.width=5>>=
+% regularity %>% ggplot(aes(Auxiliary, FamilySize)) +
+%   geom_boxplot() +
+%   stat_summary(fun.y="mean", geom="point", color="blue", size=3)
+% @
+% 
+% The relevant variable, \texttt{Auxiliary}, has three levels. Let's see how this kind of variable is dealt with in a regression model.
+% 
+% \hypertarget{exercise}{%
+% \subsubsection*{Exercise}\label{exercise}}
+% \addcontentsline{toc}{subsubsection}{Exercise}
+% 
+% \begin{enumerate}
+% \def\labelenumi{\arabic{enumi}.}
+% \item
+%   Fit a regression model predicting \texttt{FamilySize} from \texttt{Auxiliary}.
+% \item
+%   What does the intercept (\(\beta_0\)) represent?
+% \item
+%   What do the two coefficients for \texttt{Auxiliary} (\(\beta_1\), \(\beta_2\)) represent?
+% \end{enumerate}
+% 
+% Hint: Compare \(\beta\) coefficients with group means, which you can check using \texttt{summarise()} from \texttt{dplyr}.
+% 
+% Solution to (1):
+% 
+% <<>>=
+% m4 <- lm(FamilySize ~ Auxiliary, regularity)
+% summary(m4)
+% @
+% 
+% Solution to (2): The value of \texttt{FamilySize} when \texttt{Auxiliary}=``hebben''.
+% 
+% Solution to (3): The predicted difference in \texttt{FamilySize} between \texttt{Auxiliary}=``zijn'' and ``hebben'', and between \texttt{Auxiliary}=``zijnheb'' and ``hebben''.
+% 
+% \hypertarget{releveling-factors}{%
+% \subsection{Releveling factors}\label{releveling-factors}}
+% 
+% It's often useful for conceptual understanding to change the ordering of a factor's levels. For the \texttt{regularity} example, we could make \texttt{zijn} the base level of the \texttt{Auxiliary} factor:
+% 
+% <<>>=
+% regularity$Auxiliary <-relevel(regularity$Auxiliary, "zijn")
+% 
+% m5 <- lm(FamilySize ~ Auxiliary, regularity)
+% summary(m5)
+% @
+% 
+% \begin{quote}
+% \textbf{Questions}:
+% 
+% \begin{itemize}
+% \tightlist
+% \item
+%   What is the interpretation of the intercept and the two \texttt{Auxiliary} coefficients in this new model?
+% \end{itemize}
+% \end{quote}
+
+\begin{exercises}
+
+\exer{For model \ttt{slr\_mod\_1} fitted in Section~\ref{sec:lr-parameter-estimation}:}
+
+\subexer{What is the predicted \texttt{RTlexdec} when \texttt{WrittenFrequency} = 5?  10?}
+%When \texttt{WrittenFrequency} = 10?}
+
+\subexer{Why doesn't it make sense to predict \texttt{RTlexdec} for \texttt{WrittenFrequency} = $-1$?}
+
+\exer{In the coefficient table \ttt{summary()} outputs by default for a linear regression model (as in Section~\ref{sec:slr-hypothesis-testing}), the column for the $p$-value says `\texttt{Pr(\textgreater{}\textbar{}t\textbar{})}'.  Why is the $p$-value written this way?}
+
+\exer{In Section~\ref{sec:goodness-of-fit}, $R^2$ for model \ttt{slr\_mod\_2} is shown at the bottom of the model summary.  Verify that you get the same value by calculating the correlation between $x$ and $y$, and between observed and fitted values of $y$. (Hint: \ttt{?fitted})}
+
+\exer{Figure~\ref{fig:ixn-ex-1} (left) suggests that the effects of subject age and word frequency on lexical decision reaction time are essentially independent, for the \ttt{english} data.
+%\footnote{You can check this by fitting an appropriate model---the slope of word frequency differs by 0.2\% between old and young speakers.} 
+We now ask whether this is also the case for
+%the production task,
+word naming reaction time, \ttt{RTnaming}.}
+
+\subexer{Make a plot like Figure~\ref{fig:ixn-ex-1} left, but with  \ttt{RTnaming} rather than \ttt{RTlexdec} on the $y$-axis.  Does it look like the effect of \ttt{WrittenFrequency} differs between \tsc{old} and \tsc{young} speakers?  If so, does the amount of change seem large or small (visually)?}
+
+\subexer{Now fit a multiple regression model with response \ttt{RTnaming} and an interaction between \ttt{WrittenFrequency} and \ttt{AgeSubject}.  Is there a significant interaction between the two predictors? What is its interpretation, in words?}
+
+\subexer{Calculate 
+%(by hand or using R functions) 
+the slope of \ttt{WrittenFrequency} predicted for \tsc{old} and \tsc{young} speakers by this model.  How much steeper, as a percentage, is the slope of \ttt{WrittenFrequency} for old speakers compared to young speakers?}
+
+\subexer{How does this percentage compare to your judgement from the visualization in part (a)?  If there is a discrepancy, can you explain why it comes about?}
+%(Hint: what about the plot led to your judgement in (a)?)}
+
+% 
+% \exer{the one below (which is null). could provide a nice 'testing the null' example as follow-up.}
+% 
+% 
+% \hypertarget{example-9}{%
+% \subsubsection*{Example}\label{example-9}}
+% \addcontentsline{toc}{subsubsection}{Example}
+% 
+% Returning to \protect\hyperlink{c2ex1}{the example above}, suppose we'd like to know how much the slope of \texttt{WrittenFrequency} does actually differ between old and young speakers, and whether the difference is statistically significant (\(\alpha = 0.05\)).
+% 
+% <<fig.align='center', fig.height=3, fig.width=5>>=
+% english %>% ggplot(aes(WrittenFrequency, RTnaming)) +
+%   geom_point(size=0.5) +
+%   geom_smooth(aes(group=AgeSubject, color=AgeSubject), method="lm", se=FALSE)
+% @
+% 
+% % \texttt{X1:X2} means "interaction between \texttt{X1} and \texttt{X2}, and the notation used in R for interactions is \texttt{X1*X2}, which expands automatically to \texttt{X1\ +\ X2\ +\ X1:X2}. (The non-interaction terms are sometimes called \emph{main effects}.) So in R, these are equivalent that in R these are equivalent:
+% % 
+% % \begin{verbatim}
+% % lm(RTnaming ~ X1 * X2, data=myData)
+% % lm(RTnaming ~ X1 + X2 + X1:X2, data=myData)
+% % \end{verbatim}
+% 
+% To fit a model including an interaction between frequency and age:
+% 
+% <<>>=
+% m3 <- lm(RTnaming ~ WrittenFrequency * AgeSubject, english)
+% @
+% 
+% In the summary of this model, of interest is the \texttt{WrittenFrequency:AgeSubjectyoung} row, which is the interaction effect:
+% 
+% <<>>=
+% summary(m3)
+% @
+% 
+% We see that there is indeed a significant interaction between \texttt{WrittenFrequency} and \texttt{AgeSubject}.
+% 
+% \begin{quote}
+% \textbf{Questions}:
+% 
+% \begin{itemize}
+% \item
+%   What does it mean that this coefficient is positive?
+% \item
+%   For this regression model including an interaction, what is the model for an observation with \texttt{WrittenFrequency=3} and \texttt{AgeSubject==\textquotesingle{}old\textquotesingle{}}? \protect\hyperlink{c2sol1}{Solution}.
+% \item
+%   What is the model for an observation with \texttt{WrittenFrequency=3} and \texttt{AgeSubject==\textquotesingle{}young\textquotesingle{}}? \protect\hyperlink{c2sol2}{Solution}.
+% \end{itemize}
+% \end{quote}
+% 
+% % \exer{Another example calculating by  hand what a regression model with interactions predicts}
+
+\exer{For model \ttt{mlr\_mod\_2} fitted in Section~\ref{sec:goodness-of-fit-metrics},
+calculate the values shown in  Figure~\ref{fig:mlr-mod-3-plots} (left) `by hand'.  That is, use R functions to make a dataframe with each combination of $x_1$ and  $x_2$, then to get a model prediction and 95\% CIs for each row.  (Hint: \ttt{?predict.lm})
+%shows you the help page for \ttt{predict} applied to \ttt{lm} models.)
+\label{ex:neutralization-prediction}}
+
+
+\exer{In Sections \ref{sec:ixn-example} and \ref{sec:releveling-factors-interpretability}, the same regression model is fit for the \ttt{neutralization} data with the base level of the \ttt{voicing} factor changed. The text explains why the \ttt{voicing} and \ttt{voicing:prosodic\_boundary} estimates for the two models are the same except with the opposite sign.  However, the other coefficients (the intercept, \tsc{prosodic\_boundary}) have different values.}
+
+\subexer{Why are the \ttt{prosodic\_boundary} coefficients different in the two models? What is the interpretation of this coefficient in each model?}
+
+\subexer{Same question, for the intercept (the \ttt{(Intercept)} coefficient).}
+
+
+\end{exercises}

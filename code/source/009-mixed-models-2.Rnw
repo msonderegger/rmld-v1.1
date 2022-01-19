@@ -1,0 +1,2292 @@
+% !Rnw root = master.Rnw
+
+
+<<cache=FALSE, echo=FALSE>>=
+## trying this out to use num signif digits (which is what
+## tidy print does by default) instead of decimal
+options(knitr.digits.signif = TRUE)
+options(digits = 2)
+@
+
+
+\chapter{Mixed-effects models 2: Logistic regression}
+\label{chap:mem-2}
+
+This chapter introduces mixed-effects logistic regression, first covering the same aspects as LMMs (Section~\ref{sec:melr-intro}--\ref{sec:melr-model-validation}):  fitting and interpreting models, hypothesis testing, and so on.  We then discuss some practical topics---factors, nonlinear effects, variable importance---for mixed-effects models generally (Section~\ref{sec:melr-nonlinear}--\ref{sec:melr-varimp}).
+
+\section{Preliminaries}
+\label{sec:melr-prelim}
+
+\subsection{Packages}
+
+This chapter assumes that you have loaded various packages from previous chapters, as well as the {afex}, {DHARMa}, and {partR2}, and marginaleffects packages \citep{afex,DHARMa,partR2,marginaleffects}:
+
+<<cache=FALSE>>=
+library(tidyverse)
+library(broom)
+library(arm)
+library(lme4)
+library(car)
+library(broom.mixed)
+library(MuMIn)
+library(pbkrtest)
+library(emmeans)
+library(ggeffects)
+library(margins)
+library(ModelMetrics)
+library(afex)
+library(DHARMa)
+library(partR2)
+library(marginaleffects)
+
+## ensures that `rescale' is not the version from the `scales' package
+rescale <- arm::rescale
+@
+
+\subsection{Data}
+\label{sec:givenness-data}
+
+
+We also assume you have set the default contrasts for factors to Helmert contrasts (Section~\ref{sec:factors-discussion}); loaded the \ttt{diatones} dataset from Chapter~\ref{chap:cda-logistic-regression}, processed to end up with the same standardized versions of the predictors; and loaded the \ttt{french\_cdi\_24} data from Chapter~\ref{chap:practical-regression-topics}:
+
+<<>>=
+options(contrasts = c("contr.helmert", "contr.poly"))
+
+diatones <- read.csv("data/diatones_rmld.csv", stringsAsFactors = TRUE)
+
+diatones <- diatones %>% mutate(
+  syll1_coda_orig = syll1_coda,
+  syll2_coda_orig = syll2_coda,
+  syll2_td_orig = syll2_td,
+  ## turns no/yes -> 0/1, then center
+  syll1_coda = rescale(syll1_coda_orig),
+  ## code '0'/'C'/'CC'/'CCC' as ordered factor-> 0/1/2/3,
+  ## then standardize
+  syll2_coda = rescale(str_count(syll2_coda_orig, "C")),
+  syll2_td = rescale(syll2_td_orig),
+  frequency = rescale(frequency)
+)
+
+french_cdi_24 <- read.csv("data/french_cdi_24_rmld.csv", 
+  stringsAsFactors = TRUE)
+@
+
+
+\subsubsection*{The \ttt{givenness} data}
+
+Load the \ttt{givenness} dataset:
+
+<<>>=
+givenness <- read.csv("data/givenness_rmld.csv", stringsAsFactors = TRUE)
+@
+
+<<echo=FALSE>>=
+n_item_g <- length(unique(givenness$item))
+n_par_g <- length(unique(givenness$participant))
+@
+
+\ttt{givenness} contains data from a speech production experiment reported in \citet{wagner12illusion}, examining how information structure affects which words in a sentence are pronounced with more emphasis (`prominence'). \citet[][\S10.6]{qmld}
+%Section~\ref{sec:give-data-details} 
+describes this data and the scientific context in detail.
+
+The data has \Sexpr{nrow(givenness)} rows, each corresponding to one sentence read by a participant. 
+The response variable is \ttt{stressshift}, which describes whether prominence on the target NP (`noun phrase': intuitively, this is basically a noun) has been shifted (levels \tsc{noshift}, \tsc{shift}); the numeric version is \ttt{shifted} (values: 0 and 1). Of primary interest is whether the probability of shifting prominence is affected by experimental condition \ttt{conditionLabel} (levels \tsc{contrast}, \tsc{williams}); a higher probability in  \tsc{Williams} than \tsc{Contrast} is called the \emph{Williams effect}. Controls are the type of NP (levels \tsc{full}, \tsc{pronoun}), the \ttt{voice} of the sentence (levels \tsc{active}, \tsc{passive}), and the sentence's \ttt{order} (how far the participant is in the experiment).  
+
+The data is grouped by \ttt{item} (\Sexpr{n_item_g} levels), where \ttt{conditionLabel} and \ttt{npType} vary within item (each item is a 2x2 set), and each item has a fixed \ttt{voice} value. The data is also grouped by \ttt{participant} (\Sexpr{n_par_g} levels); each participant saw 0--1 sentences from each \ttt{item} set:
+
+<<output.lines=1:5>>=
+xtabs(~ item + participant, data = givenness)
+@
+
+\ttt{conditionLabel}, \ttt{npType}, and \ttt{order} are thus observation-level (they vary within participants and items), while \ttt{voice} is item-level.
+
+We mostly use versions of predictions which are standardized by `rescaling' (Section~\ref{sec:centering-scaling}): \ttt{clabel.williams}, \ttt{npType.pronoun}, \ttt{voice.passive}, \ttt{order.std}:
+%for the same reasons as always:
+
+<<>>=
+givenness <- mutate(givenness,
+  clabel.williams = rescale(conditionLabel),
+  npType.pronoun = rescale(npType),
+  voice.passive = rescale(voice),
+  order.std = rescale(order),
+  shifted = (as.numeric(stressshift) - 1),
+  ## make sure that grouping factors are factors
+  item = as.factor(item),
+  participant = as.factor(participant)
+)
+@
+
+Figs.~\ref{fig:givenness-empirical}--\ref{fig:givenness-empirical-2} show the empirical effect of each predictor, as well as an interaction which will be included in our model.
+%of sentences with shifted prominence as a function of each predictor. 
+%noun/verb pairs with shifted stress as a function of each predictor.  
+
+
+<<givenness-empirical, echo=F, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap='Emprical effect of each predictor, on the proportion of  sentences with shifted prominence, for the \\ttt{givenness} dataset.  For observation-level predictors \\ttt{conditionLabel}, \\ttt{npType}, and \\ttt{order}, points are individual observations (at $y$=0, 1); dots/errorbars are means and exact 95\\% CIs; and the line/shading are predictions and 95\\% CIs from simple logistic regression. For item-level predictor \\ttt{voice}, points and dots/errorbars are by-item proportions and corresponding means/bootstrapped 95\\% CIs.'>>=
+# for exact binomial CIs
+library(binom)
+
+## uses correct exact binomial CI
+givenness %>%  group_by(conditionLabel) %>% 
+  summarise(n=n(), s=sum(shifted==1)) %>% split(.$conditionLabel) %>%
+  map(~binom.confint(.$s, .$n, methods = c('exact'))) %>% 
+  bind_rows(.id='conditionLabel') %>%
+  ggplot(aes(x=conditionLabel, y=mean)) + 
+  geom_pointrange(aes(ymin=lower, ymax=upper)) +
+  geom_jitter(aes(x=conditionLabel, y=shifted), size=0.3,alpha=0.5,  width=0.1, height=0.02, data=givenness) +  xlab("Condition label") +
+  ylab("P(shifted)")
+# 
+# givenness %>% ggplot(aes(x = conditionLabel, y = shifted)) +
+#   geom_jitter(size = 0.3, width = 0.1, height = 0.02) +
+#   stat_summary(fun.data = "mean_cl_boot") +
+#   xlab("Condition label") +
+#   ylab("P(shifted)")
+
+## uses correct exact binomial CI
+givenness %>%  group_by(npType) %>% 
+  summarise(n=n(), s=sum(shifted==1)) %>% split(.$npType) %>%
+  map(~binom.confint(.$s, .$n, methods = c('exact'))) %>% 
+  bind_rows(.id='npType') %>%
+  ggplot(aes(x=npType, y=mean)) + 
+  geom_pointrange(aes(ymin=lower, ymax=upper)) +
+  geom_jitter(aes(x=npType, y=shifted), size=0.3,alpha=0.5,  width=0.1, height=0.02, data=givenness) +  xlab("NP type") +
+  ylab("P(shifted)")
+
+
+# givenness %>% ggplot(aes(x = npType, y = shifted)) +
+#   geom_jitter(size = 0.3, width = 0.1, height = 0.02) +
+#   stat_summary(fun.data = "mean_cl_boot") +
+#   xlab("NP type") +
+#   ylab("P(shifted)")
+
+givenness %>%
+  group_by(item, voice) %>%
+  summarise(p = mean(shifted)) %>%
+  ggplot(aes(x = voice, y = p)) +
+  geom_jitter(size = 0.5, width = 0.1, height = 0.02) +
+  ylim(0, 1) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  xlab("Sentence voice") +
+  ylab("P(shifted)")
+
+givenness %>% ggplot(aes(x = order, y = shifted)) +
+  geom_jitter(size = 0.3, alpha=0.5, width = 0.1, height = 0.02) +
+  geom_smooth(color=default_line_color, method = "glm", method.args = list(family = "binomial")) +
+  xlab("Trial order") +
+  ylab("P(shifted)")
+@
+
+<<givenness-empirical-2, echo=FALSE, out.width='55%', fig.width=default_fig.width*.55/default_out.width, fig.cap='Empirical interaction plot of \\ttt{voice} and \\ttt{conditionLabel}, for the \\ttt{givenness} dataset. Points and dots/errorbars are by-item proportions and corresponding means/bootstrapped 95\\% CIs.'>>=
+givenness %>%
+  group_by(item, voice, conditionLabel) %>%
+  summarise(p = mean(shifted)) %>%
+  ggplot(aes(x = voice, y = p)) +
+  geom_jitter(size = 0.5, alpha=0.5, width = 0.1, height = 0.02) +
+  ylim(0, 1) +
+  stat_summary(fun.data = "mean_cl_boot", aes(shape = conditionLabel), size=0.75) +
+  scale_shape_discrete(name = "Condition\nlabel") +
+  labs(
+    x = "Sentence voice",
+    y = expression(P("shifted"))
+  )
+@
+
+\section{Introduction}
+\label{sec:melr-intro}
+
+% FUTURE: consider replacing MELR acronym throughout, see JPK comments.  L could be linear, and MEL inverts usual LME order.
+\emph{Mixed-effects logistic regression} (MELR) is to logistic regression as linear mixed-effects models are to linear regression. MELRs combine pieces we have seen previously in Chapters~\ref{chap:cda-logistic-regression} and~\ref{chap:lmm-1} on logistic regression and linear mixed-effects models.  The response, $y$, is binary---it can take on values 1 or 0---and the data is grouped by one or more grouping factors. We model the log-odds that $y=1$ as a function of fixed effects (`predictors' from logistic regression), which capture the average effects of predictors (across groups), and random effects, which capture by-group variability.
+
+\subsection{A first model: \ttt{diatones} with a random intercept}
+\label{sec:diatones-melr}
+
+To introduce notation and concepts, let's consider first an example with a  single random-effect term using the \ttt{diatones} data.  
+
+Recall our final model for this data from Section~\ref{sec:diatones-mod-2}, \ttt{mlogreg\_mod\_3}, which we refit here as \ttt{diatones\_fixef\_mod}:
+
+<<>>=
+diatones_fixef_mod <- glm(formula = stress_shifted ~ syll2_coda +
+  syll2_td + frequency + syll1_coda + syll2_td:frequency +
+  frequency:syll1_coda, family = "binomial", data = diatones)
+@
+
+A diagnostic plot for this model (Figure~\ref{fig:prefix-resid}) suggested that words with the same prefix (predictor \ttt{prefix}) might not be independent.    
+
+We can address this non-independence by fitting a mixed-effects logistic regression model, with \ttt{prefix} as a grouping factor, and a by-\ttt{prefix} random intercept term, using familiar notation:
+%Our notation is similar to A and B:
+
+\begin{itemize}
+\item As for logistic regression: $n = \Sexpr{nrow(diatones)}$ is the number of observations; $y_i$ is the value of the response variable for observation $i$ (0 or 1); $x_{ij}$ is the value of the $j$th predictor.
+\item As for an LMM: the $k$ predictors are `fixed effects'; their coefficients are  $\beta_1, \ldots, \beta_k$ (in addition to the intercept, $\beta_0$).
+\item There are $J$ levels of the grouping factor;  $\alpha_{j[i]}$ is the random intercept for the group that observation $i$ belongs to.
+\end{itemize}
+
+The model for the \ttt{diatones} example is then ($k=6$, $J=13$, $n=130$):
+
+% 
+% 
+% 
+% 
+% 
+% 
+% 
+% 
+% 
+% 
+% - Notation: $y_i$, $x_{ij}$ (as in logistic regression); $\beta_1, \ldots, \beta_k$ = fixed effect, $\sigma_P$ be degree of by-prefix variability, $j[i]$ = prefix of word $i$ (as for LMM).  The grouping factor is \ttt{prefix} (13 levels)
+% 
+% The regression model for this multiple logistic regression (with 6 fixed-effect coefficients: $k=6$), where the intercept varies by \ttt{prefix}, is:
+
+\begin{align}
+  \text{logit}(P(y_i = 1)) &= \beta_{0} + \alpha_{j[i]} + 
+  \beta_1 x_{i1} + \cdots + \beta_6 x_{i6} &\quad \text{for } i & = 1, \ldots, 130 \nonumber \\
+  \alpha_j & \sim N(0, \sigma_P^2) , &\text{for } j & = 1, \ldots, 13
+  \label{eq:melr1}
+\end{align}
+
+This is the same model as \ttt{diatones\_fixef\_mod}, except it is now assumed that prefixes differ in their log-odds of shifting stress.
+
+Mixed-effects logistic regressions are one kind of \emph{generalized linear mixed model} (GLMM)---analogously to logistic regression being one kind of generalized linear model. To fit a MELR model in the {lme4} package, you use the \texttt{glmer()} function (\textbf{g}eneralized \textbf{l}inear \textbf{m}ixed \textbf{e}ffects \textbf{r}egression), with a \texttt{family="binomial"} argument, similarly to fitting a logistic regression using the \texttt{glm()} function.
+
+To fit the model above:
+%\footnote{The \texttt{family=\textquotesingle{}binomial\textquotesingle{}} argument specifies this regression uses a ``logit link'', as for logistic regressions (see \citet{baayen2008analyzing}).}
+
+<<>>=
+diatones_melr <- glmer(formula = stress_shifted ~ syll2_coda +
+  syll2_td + frequency + syll1_coda + syll2_td:frequency +
+  frequency:syll1_coda + (1 | prefix), family = "binomial", 
+  data = diatones)
+
+summary(diatones_melr)
+@
+
+As for LMMs/\ttt{lmer()}, the output of \ttt{glmer()} is verbose and we typically only show the fixed and random-effect tables. The fixed-effect and random-effect terms are interpreted similarly to an LMM, with the difference that the model predicts changes in log-odds. 
+%We go into detail for a more realistic model fitted next; for the current model, we just compare the non-mixed-effects and MELR models to get a sense of what adding the random intercept does.
+
+\subsection{Interpreting the model}
+
+\paragraph{Fixed effects}
+
+ % - Interpretations of fixed effects are similar to mlogreg3, but now ``averaging across prefixes''.  (Except for the \ttt{syll1\_coda} effect, as this is a prefix-level predictor.)
+ 
+To get an intuitive sense of what adding the random effect does to the fixed effects of primary interest, compare the  (fixed-effect) results for the model with this term (\ttt{Fixed effects:} block, above) and the model without this term:
+
+<<>>=
+## fixed-effects-only model
+tidy(diatones_fixef_mod)
+@
+
+<<diatones-coef-comp, echo=FALSE, out.width='75%', fig.width=default_fig.width*.75/default_out.width, fig.cap='Coefficient estimates and 95\\% confidence intervals, from models of the \\ttt{diatones} data with and without a by-prefix random intercept (\\ttt{diatones\\_melr}, \\ttt{diatones\\_fixef\\_mod}: triangles, dots).'>>=
+bind_rows(
+  tidy(diatones_fixef_mod, conf.int = TRUE) %>% add_column(type = "fixed"),
+  tidy(diatones_melr, conf.int = TRUE) %>% filter(effect == "fixed") %>% select(-effect, -group) %>% add_column(type = "fixed+random")
+) %>% ggplot(aes(x = term, y = estimate, shape = type)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(width = 0.5)) +
+  geom_hline(aes(yintercept = 0), lty = 2) +
+  coord_flip() + theme(axis.title.y = element_blank()) +
+  theme(legend.position = c(0.75, 0.15),
+    legend.background = element_rect(fill="white", 
+      size=0.5, linetype="solid")) + 
+  xlab("Coefficient estimate")
+
+@
+
+To help compare, Figure~\ref{fig:diatones-coef-comp} shows the estimate and 95\% confidence interval for each coefficient.  The results are mostly qualitatively similar, in the sense that no sign or significance of a fixed effect changes greatly: for most coefficients the 95\% CIs either overlap 0 (e.g., \ttt{frequency}) or don't (e.g.,\ \ttt{syll2\_td}) in both models. (Overlapping 0 corresponds to the $|z|>2$ threshold.)  The one exception is \ttt{syll1\_coda}, whose CI overlaps 0 in the mixed-effects model but not in the fixed-effects model.  This makes sense: adding a by-prefix random intercept increases uncertainty in the estimate for the sole prefix-level predictor (\ttt{syll1\_coda}).
+% 
+% - The results are mostly qualitatively similar, in the sense that no sign or significance of a fixed effect changes greatly (relative to a $|z|>2$ threshold). The one exception is the \ttt{syll1\_coda} effect, where $|z|<2$; makes sense  as this predictor is prefix-level.
+
+The standard errors are all higher in the mixed-effects model (= wider CIs),
+reflecting increased uncertainty about the estimates, which also raises $p$-values.  
+%% This actually isn't quite true -- Snijders and Bosker discuss how in this case the betas *have to* increase, and I think the SEs do as well, by default? But not for a contentful reason.
+This effectively means that the model's predictions look similar, but have wider confidence intervals. For example, compare the interaction effects in Figure~\ref{fig:mlogreg-eff-2} to Figure~\ref{fig:diatones-eff}.
+
+%% FUTURE: make this a box. Currently gives an error.
+
+% REMOVED the further from 0 part
+% This actually *always* happens in a logistic regression
+% when a random effect 
+% -- basically because there is a fixed variance.
+% doesn't mean actual *predictions* are different.
+% 
+% - interestingly, most coefficient estimates are *further* from 0.  So the detected effects have a larger effect size once by-prefix variability accounted for, but the effects are less certain.  This effectively means that the model prediction plots look similar, but have wider confidence intervals (Exercise). For example, 
+
+%\label{box:melr-preds}
+
+
+<<diatones-eff, echo=FALSE, fig.asp=1, out.width='40%', fig.width=default_fig.width*.4/default_out.width, fig.cap='Interaction plots for each interaction in model \\ttt{diatones\\_melr}, marginalizing over other predictors.'>>=
+diatones_melr_fact <- glmer(formula = stress_shifted ~ syll2_coda +
+    syll2_td_orig + frequency + syll1_coda_orig + 
+    syll2_td_orig:frequency + frequency:syll1_coda_orig +
+    (1 | prefix), family = "binomial", data = diatones)
+
+ggeffect(diatones_melr_fact, terms = c("frequency", "syll1_coda_orig")) %>%
+  plot(use.theme = FALSE, colors = "bw") +
+  xlab("Frequency") +
+  ylab("Predicted probability") +
+  scale_linetype_discrete(name = "Syll 1 coda") +
+  ggtitle("") +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) + 
+  theme(legend.position="bottom")
+
+
+ggeffect(diatones_melr_fact, terms = c("frequency", "syll2_td_orig")) %>%
+  plot(use.theme = FALSE, colors = "bw") +
+  xlab("Frequency") +
+  ylab("Predicted probability") +
+  scale_linetype_discrete(name = "Syll 2= t/d") +
+  ggtitle("") +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) + 
+  theme(legend.position="bottom")
+@
+
+
+\begin{boxedtext}{Practical note: Model prediction tips}
+
+As for non-mixed-effects models, it is often useful to refit the model with two-level factors coded as factors (instead of their recoded numeric versions) to make prediction plots.  For Figure~\ref{fig:diatones-eff}, this looks like the following:
+<<eval=FALSE>>=
+diatones_melr_fact <- glmer(formula = stress_shifted ~ syll2_coda +
+    syll2_td_orig + frequency + syll1_coda_orig + 
+    syll2_td_orig:frequency + frequency:syll1_coda_orig +
+    (1 | prefix), family = "binomial", data = diatones)
+@
+
+Model predictions can then be made and plotted using similar functionality to regular logistic regression (Section~\ref{sec:viz-effects-logistic}), as we discuss more below (Section~\ref{sec:melr-nonlinear}).  Code for plots in Figure~\ref{fig:diatones-eff} is in the code file.
+
+Note that refitting the model with factors won't work if you have random slopes as factors and are using uncorrelated random effects (our default case).  In this case you can just make model predictions as normal (e.g., \ttt{ggeffect(diatones\_melr, terms=c('syll1\_coda'))}), then process the resulting dataframe to turn the columns for e.g., \ttt{syll1\_coda} to factors. 
+\end{boxedtext}
+
+\paragraph{Random effects}
+
+The random-intercept variance is new. Without worrying about exactly what the estimate in log-odds means, we can see that prefixes are predicted to differ a lot in `baseline' probability of stress shift by examining these values for each prefix ($\hat{\beta}_0 + \hat{\alpha}_j$, transformed from log-odds to probability):\footnote{These predictions don't account for \ttt{syll1\_coda}, which is a prefix-level predictor.}
+
+<<>>=
+## Extracts by-word random intercept + fixed-effect intercept, 
+## in log-odds.
+coefficients(diatones_melr)$prefix %>%
+  rownames_to_column("prefix") %>%
+  ## transform to probabilities
+  mutate(p = invlogit(`(Intercept)`)) %>%
+  select(prefix, p)
+@
+
+Prefixes vary from roughly \Sexpr{min(invlogit(coefficients(diatones_melr)$prefix[,1]))*100}\% probability of stress shift to \Sexpr{max(invlogit(coefficients(diatones_melr)$prefix[,1]))*100}\%.  The prefixes with the highest intercepts (most susceptible to stress shift) are \tsc{iN}, \tsc{pro}, and \tsc{sur}---the same ones flagged in the diagnostic plot (Figure~\ref{fig:prefix-resid}).
+
+\section{Two grouping factors, random intercepts and slopes}
+
+To continue our introduction to MELRs, we consider a more realistic example, involving crossed random effects (intercepts and slopes) and multiple predictors: modeling prominence shift (\ttt{stressshift}) in the \ttt{givenness} data  (Section~\ref{sec:givenness-data}), which is grouped by \ttt{participant} and \ttt{item}.
+
+%- diatones example limited since qualitative results don't change.
+
+%- to continue MELR introduction introduce a new dataset: givenness
+
+We fit a model, with four fixed-effect predictors: \ttt{clabel.williams} (of primary interest), \ttt{npType.pronoun}, and \ttt{voice.passive} (controls), and a \ttt{clabel.williams}:\ttt{voice.passive} interaction which may modulate the effect of primary interest. We motivate this model structure in the next chapter (Section~\ref{sec:singular-examples}, \ref{sec:ms-case-study-1}), where we discuss it in the context of a model selection example. Here we take it as given.
+%an example of model selection, and here take it as given.
+%---these are the predictors that ended up mattering in \citet{wagner12illusion}'s analysis of this data.  
+
+The random effects contain by-participant and by-item intercepts, and all possible random slopes (`maximal'), uncorrelated. Because \texttt{clabel.williams} and \texttt{npType.pron} are observation-level (they vary across participants and items) while \texttt{voice.passive} is item-level (it varies across participants, but not items), the possible random slopes are: 
+\begin{itemize}
+\item
+Participant: \texttt{clabel.williams}, \texttt{npType.pron}, \texttt{voice.passive}, \\ \ttt{clabel.williams:voice.passive}
+\item
+Item: \texttt{clabel.williams}, \texttt{npType.pron}
+\end{itemize}
+
+
+It may be helpful for understanding to explicitly write out the model equations.  To do so, we define:\footnote{Our notation here is similar to Section~\ref{sec:random-slopes} for LMMs, but generalized to more complex model structure.}
+
+\begin{boxedtext}{Practical note: Random slopes for interaction terms}
+\label{box:random-slopes-interactions}
+
+Note the interaction term in the `Participant' list above.
+%(Note the interaction term: Box~\ref{box:random-slopes-interactions}.)
+An interaction term in the fixed effects of a mixed-effects model is itself a predictor, for which random slope terms may be possible.  For example, the effect of \ttt{clabel.williams}:\ttt{voice.passive} can vary between participants, because both \ttt{clabel.williams} and \ttt{voice.passive} can, so a by-participant random slope is possible.  It cannot vary between items, because \ttt{voice.passive} cannot, so a by-item random slope is not possible. More generally, if a predictor $x$ is $z$-level (e.g., $z$ = item), a by-$z$ random slope is not possible for any interaction involving $x$.
+
+This is a crucial point because interaction terms are often most important for the research questions.  It is a common error to omit random slopes for an interaction term ($x_1$:$x_2$, say), perhaps thinking that the random slopes for subset terms ($x_1$, $x_2$) are sufficient.  This raises the risk of a Type I error ($p$-value too low), as for any predictor. 
+
+\end{boxedtext}
+
+\begin{itemize}
+\item $\beta_0$, $\beta_1$, $\beta_2$, $\beta_3$, $\beta_4$: fixed-effect coefficients for the intercept, \ttt{clabel.williams}, \ttt{npType.pronoun}, \ttt{voice.passive}, and \ttt{clabel.williams:voice.passive}
+\item $x_{1, i}$,: value of \ttt{clabel.williams} for observation $i$ ($x_{2, i}$, $x_{3, i}$, $x_{4, i}$ defined similarly)
+\item $\alpha_{P,j}$: random intercept for participant \(j\)
+\item $\alpha_{I,k}$: random intercept for item \(k\)
+\item $\gamma_{1, j}$: random slope of \ttt{clabel.williams} for participant $j$
+\item $\delta_{1, k}$: random slope of \ttt{clabel.williams} for item $k$
+\item Other random slopes defined similarly: $\gamma_{2, j}$, $\gamma_{3, j}$, $\gamma_{4, j}$, $\delta_{2,k}$
+  \item $\sigma_{P, 0}^2$, $\sigma_{I,0}^2$: variances of by-participant and by-item random intercepts
+  \item  $\sigma_{P, 1}^2$, $\sigma_{P, 2}^2$, etc.:
+  %$\sigma_{P, 3}^2$: 
+  variances of by-participant random slopes of \ttt{clabel.williams}, \ttt{npType.pronoun}, etc.
+  %\ttt{voice.passive}
+    \item  $\sigma_{I, 1}^2$, $\sigma_{I, 2}^2$: variances of by-item random slopes of \ttt{clabel.williams}, \ttt{npType.pronoun}
+\end{itemize}
+
+The model for observation $i$ is then:
+\begin{align}
+\text{logit}\left(P(y_i = 1)\right)
+ &= \left(\beta_0 + \alpha_{P,j[i]} + \alpha_{I, k[i]}\right) + \left( \beta_1 + \gamma_{1,j[i]} + \delta_{1,k[i]}\right) x_{1,i}  
+ \nonumber \\
+ & +  \left( \beta_2 + \gamma_{2,j[i]} + \delta_{2,k[i]}\right) x_{2,i}   + \left( \beta_3 + \gamma_{3,j[i]} \right) x_{3,i} \nonumber \\
+& + \left( \beta_4 + \gamma_{4,j[i]} \right) x_{4,i},
+ \quad \quad \text{for } i = 1, \ldots, 382 \label{eq:melr-1-1}
+ \end{align}
+ 
+ %% FUTURE: work out alignment
+ The random effects all follow normal distributions:
+ \begin{align}
+ \alpha_{P,j} & \sim N(0, \sigma_{P,0}), \quad
+ \gamma_{1,j}  \sim N(0, \sigma_{P,1}), \quad
+ \gamma_{2,j}  \sim N(0, \sigma_{P,2})\nonumber\\
+ \gamma_{3,j} & \sim N(0, \sigma_{P,3}) \quad
+ \gamma_{4,j}  \sim N(0, \sigma_{P,4}), \quad \text{for }
+ j = 1, \ldots, 27 \label{eq:melr-1-2} \\
+ \alpha_{I,k} & \sim N(0, \sigma_{I,0}), \quad
+ \gamma_{1,k}  \sim N(0, \sigma_{I,1}) \nonumber\\
+ \gamma_{2,k} & \sim N(0, \sigma_{I,2}), \quad \text{for }
+  k = 1, \ldots, 16 \label{eq:melr-1-3} 
+\end{align}
+
+To unpack this formula, note that:
+\begin{itemize}
+\item
+  \(\beta_0 + \alpha_{P,j[i]} + \alpha_{I, k[i]}\) is the {intercept} for participant \(j[i]\) and item \(k[i]\).
+\item
+  \(\beta_1 + \gamma_{1, j[i]} + \delta_{1,k[i]}\) is the {slope for \texttt{clabel.williams}} for participant \(j[i]\), item \(k[i]\).
+\item
+  \(\beta_2 + \gamma_{2,j[i]} + \delta_{2,k[i]}\) is the {slope for \texttt{npType.pron}} for participant \(j[i]\), item \(k[i]\).
+\item
+  \(\beta_3 + \alpha_{3, j[i]}\) and $\beta_4 + \alpha_{4, j[i]}$ are the {slopes for \texttt{voice.passive} and \texttt{clabel.williams:voice.passive}} for participant \(j[i]\).
+\end{itemize}
+(Recall that observation \(i\) is from participant \(j[i]\) and item \(k[i]\).)
+
+%FUTURE: revisit; notation differs a bit from LMM chapter models (check this..), and clunky. Put in a table?
+
+This suggests an interesting way we can think of an MELR, as a logistic regression with coefficients which vary between groups (Box~\ref{box:varying-coeffs}).
+
+\begin{boxedtext}{Broader context: Varying coefficients / hierarchical Bayesian models}
+\label{box:varying-coeffs}
+
+So far we have almost always written mixed-effects regression equations in one of two ways: using  \ttt{lmer()}/\ttt{glmer()} formulas, or as one giant equation for  $y_i$ plus the distributions of random effects (which is essentially what the formulas are shorthand for).
+
+It can be very useful for understanding to instead write mixed-effects regressions in different ways, as a set of equations which are being solved together. \citet[][\S12.5, 13.1]{gelman2007data} show various ways to write the same mixed-effects model, including
+%of which ``perhaps the simplest way'' is 
+as a classic regression (i.e., $y = \beta_0 + \beta_1 x$) whose coefficients vary across groups.
+
+The MELR model in equation \eqref{eq:melr-1-1} can be rewritten as follows:
+\begin{eqnarray}
+\text{logit}\left(P(y_i = 1)\right)
+ &=& \beta_0^{j[i],k[i]} +  \beta_1^{j[i],k[i]} x_{1,i} +
+ \beta_2^{j[i],k[i]} x_{2,i} +
+ \beta_3^{j[i]} x_{3,i}  + 
+ \beta_4^{j[i]} x_{4,i}
+ \nonumber \\
+  && i = 1, \ldots, 382 \label{eq:melr-2-1}\\
+\beta_0^{j,k} & = &
+\beta_0 + \alpha_{P,j} + \alpha_{I, k}
+\label{eq:melr-2-2}
+\\
+\beta_1^{j,k} &=& \beta_1 + \gamma_{1,j} + \delta_{1,k} \label{eq:melr-2-3} \\
+\beta_2^{j,k} &=& \beta_2 + \gamma_{2,j} + \delta_{2,k} \label{eq:melr-2-4} \\
+\beta_3^{j} & =& \beta_3 + \gamma_{3,j} 
+\label{eq:melr-2-5}
+\\
+\beta_4^{j} & =& \beta_4 + \gamma_{4,j}, \quad j = 1, \ldots 27, 
+\quad k = 1, \ldots, 16
+\label{eq:melr-2-6}
+\end{eqnarray}
+(Equations \ref{eq:melr-1-2}--\ref{eq:melr-1-3} describing the random-effect distributions still hold.)
+
+That is: the MELR can be thought of as a group of models: a logistic regression (equation~\ref{eq:melr-2-1}) with an intercept and three slopes; and models (equations \ref{eq:melr-2-2}--\ref{eq:melr-2-6}) describing how the intercept and slope coefficients vary, as a function of participant ($\beta_0$--$\beta_4$) and item ($\beta_0$--$\beta_2$). 
+This is called a `varying-intercept, varying-slope'
+ model  by \citet[][\S12.5]{gelman2007data}; a  model with just a random intercept would be a `varying-intercept model'.  
+ %This model has an explicitly `hierarEqs.~\ref{eq:melr-2-1}-- Eqs.~\ref{eq:melr-2-4} describe `level 1' and Eqs.~\ref{eq:melr-1-2}--\ref{eq:melr-1-3} describe `level 2'. 
+
+Thinking of mixed-effects regressions in this way is useful for understanding exactly what they are doing, and what they cannot do---for example, variance components differing by group, or autocorrelated errors---and as a stepping stone to more advanced regression models.  \citet[][\S12.5]{gelman2007data} describe other ways of writing mixed-effects regressions, as several equations, where it is easier to see how the equations should be changed to accommodate such extensions---but an {lme4} formula cannot accommodate them.   
+
+Such extensions are possible in a more general `hierarchical Bayesian model' framework,
+%(discussed further in Section~\ref{sec:bayesian-mods}), 
+which contain mixed-effects models as a subset.
+%and which require writing out models explicitly. 
+These models are increasingly used to model linguistic data, and are a natural next step from mixed-effects models (see Chapter 10 `Other reading'). 
+%Some places to start for linguists and cognitive scientists are \citet[][]{vasishth2018bayesian,nicenboim2021introduction} for linguistics/cognitive science. \citet[][]{mcelreath2020statistical}, \citet[][]{kruschke2014doing}, are comprehensive but approachable general introductions to Bayesian regression modeling.
+%% FUTURE: last paragraph necessary? or cut down, or add where to read more? G-H don't actually discuss such extensions.
+\end{boxedtext}
+
+
+The terms fitted in this model---and hence shown in the regression model output---are the four fixed-effects coefficients ($\beta_0$--$\beta_4$), and the seven variance components (2 random-intercepts and 6 random-slopes: $\sigma_{P,0}^2$, $\sigma_{I,2}^2$, etc.).
+
+Note that unlike linear mixed-effects models, there is no residual error variance term, for the same reasons as for logistic regression (see Box~\ref{box:log-lin-reg-diffs}).
+
+\subsection{Fitting the model}
+\label{sec:givenness-m1}
+
+To fit this model in R:
+
+<<warning=TRUE>>=
+givenness_m1 <- glmer(stressshift ~ clabel.williams * voice.passive +
+  npType.pronoun + (1 + clabel.williams + npType.pronoun || item) +
+  (1 + clabel.williams * voice.passive + npType.pronoun || participant),
+data = givenness, family = "binomial")
+@
+
+We get a convergence error.  For MELRs, this happens a lot with the \ttt{glmer()} default settings and is  commonly resolved by just changing the optimizer \ttt{glmer()} uses from the default to \ttt{bobyqa}, and/or the maximum number of iterations the optimizer uses (Box~\ref{box:glmer-details}).  We use these solutions when necessary to fit models in this chapter; in the next chapter (Section~\ref{sec:lmm-convergence}) we discuss convergence issues in more detail.  
+
+For the current model: 
+<<message=TRUE>>=
+givenness_m1 <- glmer(stressshift ~ clabel.williams * voice.passive +
+    npType.pronoun + (1 + clabel.williams + npType.pronoun || item) +
+    (1 + clabel.williams * voice.passive + npType.pronoun || participant),
+  data = givenness, family = "binomial", 
+  control = glmerControl(optimizer = "bobyqa")
+)
+@
+
+The singular model warnings, due to some zero random-effect terms, are likely because there is not enough data relative to the number of random-effect terms (Section~\ref{sec:singular-models}).  We will just ignore  singular model warnings in this chapter, for simplicity, and return to this data in the next chapter. Models refitted without the offending random-effect terms are near-identical.
+
+
+% FUTURE: consider cutting/simplifying a lot.   we need some detail of second part for Ch. 10. Should it go there?
+\begin{boxedtext}{Broader context: Details of GLMM and \ttt{glmer()}}
+\label{box:glmer-details}
+
+We only consider logistic regression, but as for GLMs, there are other types of GLMM (Poisson, multinomial, etc.) to which \ttt{glmer()} straightforwardly applies.  See references in listed in Section~\ref{sec:other-reading-ch9}; these also cover mathematical  details of GLMMs.  In language sciences, there are few treatments of non-binomial GLMMs \citep[e.g.][]{winter2021poisson,coupe2018modeling,lo2015transform}, but they are used in an increasing number of papers.
+%especially Poisson, multinomial, and negative binomial regression models.  
+We have chosen to spend a chapter just on MELR models because they are the most commonly used mixed-effects model for linguistic data.
+%mirroring the fact that the majority of linguistic data has a categorical response, and it is still uncommon to use other regression models for categorical data (e.g.,\ Poisson, multinomial).
+%($y$), 
+%(arguably) the most applicable mixed-effects model for linguistic data, which tends to be categorical
+%\citep[e.g.,][]{davidson2016variability,turnbull2018patterns,winter2012phonetic,jaeger2011mixed,blasi2019human}.
+%% FUTURE: examples? or revise this part
+
+% MELR models are the most common type of GLMM in many fields, along with Poisson models, but for linguistic data in particular they are the most commonly-used statistical model, period---even more than LMMs. (Phonetic data, where both LMMs and MELRs are common, is an exception.) This is because much linguistic data has a categorical response (does $y$ happen or not?), and it is still very uncommon to use other regression models for categorical data (e.g.,\ Poisson, multinomial).  Thus, while many introductions to mixed-effects models spend a lot of time on LMMs, then cover GLMMs as an important secondary case, using different types of models (e.g., binomial, Poisson), we have chosen to spend an entire chapter just on MELR models. 
+
+For details of the \ttt{glmer()} implementation, the {lme4} documentation contains some information, as does \citep{glmmfaq}, but there is currently no good write-up, analogous to \citep{bates2015fitting} for {lme4}.  Still, it is useful to know a bit to debug fitting problems, and for perspective on why GLMMs are `harder' than LMMs.
+
+Fitting a GLMM entails finding parameters that maximize a likelihood function, as for LMMs. %(Technically, this is the `marginal likelihood'.) 
+As the top of \ttt{summary(diatones\_melr)} above says, ``...fit by maximum likelihood (Laplace approximation)''.  Note that GLMMs are fitted only by {maximum likelihood}---not REML (as for LMMs), as it is harder to define or compute REML for GLMMs \citep[][\S13.3.2]{bolker2015linear}.  This means that the variance component estimates for GLMMs are a bit biased, although
+%---though we often don't care about these, and
+the bias is small except for very small sample size relative to the number of parameters \citep[e.g.,][\S4.7]{snijders2011multilevel}.
+
+For LMMs it is possible to actually write out the likelihood. For GLMMs, it is not, and an approximation algorithm must be used to estimate the likelihood. 
+There are several standard algorithms that trade off in speed and accuracy \citep{bolker2009generalized}; {lme4} uses the compromise `Laplace approximation' by default.
+%which is slower than penalized quasi-likelihood (PQL; used by many other packages), and less accurate than Gauss-Hermite quadrature (available in {lme4}, but only for very simple random-effect structure).
+
+This (approximate) likelihood must then be maximized, as for LMMs, using an optimization algorithm. {lme4} has many possible options with many parameters; see \ttt{?glmerControl} for details. As of this writing ({lme4} \Sexpr{packageVersion('lme4')}), the most important default settings are: \ttt{bobyqa} and \ttt{Nelder\_Mead} for stages 1 and 2 of optimization, with \ttt{maxfun}=10000, the maximum number of steps the algorithm tries before giving up.
+
+This is a complex optimization problem, harder than for LMMs, and it is more common for GLMMs that the optimizer does not find a solution using the default settings (``the model doesn't converge'')---even when there is nothing `wrong', the optimization parameters just need to be tweaked.  We go into convergence in more detail in next chapter, but when fitting logistic regressions with \ttt{glmer()}, convergence problems are often resolved by setting the optimizer for both stages to \ttt{bobyqa} (as we do for \ttt{givenness\_m1}) and/or increasing \ttt{maxfun}.
+% We often do so in this chapter, without comment.
+
+
+
+% 
+% - That (approximate) ML is still complex -- as for LMM, use an optimizer to find params maximizing likelihood.  As of this writing, default is bobyqa, N-M for stages 1-2 of optimization, 10000 steps max.  These defaults not infrequently give  convergence warnings. We go into convergence in more detail in next chapter, but for logistic regressions --- often resolved by just setting optimizer to bobyqa (as we do for m1), and/or increase maxfun.  We often do so in this chapter without comment.
+% 
+
+% - Maximum likelihood, only---no REML, as its unclear how to define it/active research area (see GLMM FAQ).  Thus, have biased variance component estimates.  Usually we don't care about these; even when we do, Bolker suggests bias small except for very small sample size relative to params.
+% % https://stats.stackexchange.com/questions/269224/how-to-obtain-reml-estimates-in-a-glmer-optimizing-random-effects-structure-in
+
+
+
+% - For LMM can find exact solution. For GLMM, can't -- must approxiamte. REquires using some approximation algorithm.  lme4 uses the Laplace approximation by default, which is a speed-accuracy compromise among several options \citep[][]{bolker2009generalized}.  For more exact, while still able to fit complex GLMMs (e.g., crossed random effects), need to use MCMC instead.
+
+% - That (approximate) ML is still complex -- as for LMM, use an optimizer to find params maximizing likelihood.  As of this writing, default is bobyqa, N-M for stages 1-2 of optimization, 10000 steps max.  These defaults not infrequently give  convergence warnings. We go into convergence in more detail in next chapter, but for logistic regressions --- often resolved by just setting optimizer to bobyqa (as we do for m1), and/or increase maxfun.  We often do so in this chapter without comment.
+
+
+\end{boxedtext}
+
+The model output is:
+
+<<output.lines=17:36>>=
+summary(givenness_m1)
+@
+
+\subsection{Interpreting the model}
+
+
+%The fixed-effect and random-effect terms are interpreted similarly to a linear mixed-effects model, with the difference that the model predicts changes in log-odds.
+
+\subsubsection{Fixed effects}
+\label{sec:giv-m1-fixef}
+
+These are interpreted similarly to non-mixed-effects logistic regression coefficients (Section~\ref{sec:log-reg-ex-1}), in log-odds, odds, or probabilities. 
+
+For example, the estimated intercept is \(\hat{\beta}_0 = \Sexpr{extractFixefEst(givenness_m1, '(Intercept)')}\): this is the log-odds of stress shifting for an average participant and average item, with all predictors held at mean values, corresponding to a probability of:
+
+<<>>=
+beta_0 <- fixef(givenness_m1)[["(Intercept)"]]
+invlogit(beta_0)
+@
+% 
+%     \begin{equation*}
+%         P(\text{shift stress}) = \text{logit}^{-1}(\Sexpr{extractFixefEst(givenness_m1, '(Intercept)')}) = \Sexpr{plogis(extractFixefEst(givenness_m1, '(Intercept)'))}
+%       \end{equation*}
+
+The slope for \ttt{clabel.williams} is 
+\(\hat{\beta}_1 = \Sexpr{extractFixefEst(givenness_m1, 'clabel.williams')}\), meaning that for an average participant and item, the log-odds of shifting stress are this much higher in the \tsc{williams} condition than in the \tsc{contrast} condition (averaging across \ttt{voice.passive}).  (Alternatively,  the odds of shifting stress are \Sexpr{exp(extractFixefEst(givenness_m1, 'clabel.williams'))} times higher 
+($=e^{\Sexpr{extractFixefEst(givenness_m1, 'clabel.williams')}}$).)    
+
+To interpret the coefficients in probability space (Section~\ref{sec:average-marginal-effects}), we could calculate their average marginal effects:
+
+<<>>=
+margins(givenness_m1)
+@
+
+The \ttt{clabel.williams} effect (of primary interest) corresponds to a change in probability of about 0.41, which is large.
+
+\subsubsection{Random effects}
+
+<<echo=FALSE>>=
+sig1 <- extractRanefEst(givenness_m1, "participant", "sd__(Intercept)")
+@
+
+First, for random intercepts: the estimated by-participant random intercept standard deviation is \(\hat{\sigma}_{P,0} = \Sexpr{sig1}\).  This corresponds to 95\% of participants having `baseline' log-odds of shifting stress in $\hat{\beta}_0 \pm 1.96 \cdot \hat{\sigma}_{P,0}$, which is:
+
+<<>>=
+## Extract random-effect estimate from the model table printed above:
+sig_P0 <- attr(VarCorr(givenness_m1)$participant.4, "stddev")
+sig_P0 <- as.numeric(sig_P0)
+
+## Lower and upper bounds on 95% of participants:
+c(beta_0 - 1.96 * sig_P0, beta_0 + 1.96 * sig_P0)
+@
+
+This corresponds to 95\% of participants having baseline probability of shifting stress in:
+
+<<>>=
+c(invlogit(beta_0 - 1.96 * sig_P0), invlogit(beta_0 + 1.96 * sig_P0))
+@
+
+In contrast, there is no (detectable) variability among items in the baseline log-odds of shifting stress ($\hat{\sigma}_{I,0} \approx 0$).
+
+For random slopes, consider the \ttt{conditionLabel.williams} effect of primary interest. The degrees of variability among participants and items in the \texttt{clabel.williams} slope  are $\hat{\sigma}_{P,1} = \Sexpr{extractRanefEst(givenness_m1, 'participant', 'sd__clabel.williams')}$  and $\hat{\sigma}_{I,1} = \Sexpr{extractRanefEst(givenness_m1, 'item', 'sd__clabel.williams')}$ (in log-odds).  
+
+The predicted \ttt{clabel.williams} slopes for different participants and items are shown, with the population-level effect, in Figure~\ref{fig:givenness-preds-1}.  These predictions are extracted similarly to LMMs (Section~\ref{sec:pred-rand-eff}):
+
+<<>>=
+beta <- fixef(givenness_m1)[["clabel.williams"]]
+
+particSlopes <- beta + ranef(givenness_m1)$participant$clabel.williams
+## Alternatively:
+## coefficients(givenness_m1)$participant$clabel.williams
+
+itemSlopes <- beta + ranef(givenness_m1)$item$clabel.williams
+## exp(particSlopes) are the slopes in odds-ratios, which are
+## plotted in histograms.
+@
+
+<<givenness-preds-1, echo=FALSE, out.width='75%', fig.width=default_fig.width*.75/default_out.width, fig.cap='By-participant and by-item variation in the model-predicted \\ttt{clabel.williams} effect for \\ttt{givenness\\_mod1} (as odds ratios), with  overlaid estimate for \\ttt{clabel.williams} population-level effect (dotted lines).'>>=
+rbind(
+  data.frame(pred = exp(particSlopes), type = "participants"),
+  data.frame(pred = exp(itemSlopes), type = "items")
+) %>%
+  ggplot(aes(x = pred)) +
+  geom_histogram(binwidth = 5, fill='darkgrey') +
+  facet_wrap(~type, scales = "free_y") +
+  xlab("Predicted slope (Odds Ratio)") +
+  ylab("Count") +
+  geom_vline(aes(xintercept = exp(beta)), lty = 2, size=0.75)
+@
+
+The model predicts that the size of the Williams effect varies greatly among items---but not participants---and is robust, in the sense of having the same direction across all participants and items.  
+
+Thus, participants (but not items) differ in the intercept, while items (but not participants) differ in the Williams effect (the \texttt{clabel.williams} slope).
+
+\begin{boxedtext}{Practical note: Model predictions by group}
+\label{box:group-predictions}
+
+There is more than one way to define a mixed-effects model's by-group predictions, such as each item's intercept or \ttt{clabel.williams} slope for the \ttt{givenness\_m1} model.  The most common way, which we mostly use in the text and which is used by most helper functions (e.g.\ \ttt{coefficients()} or \ttt{ggpredict()} applied to a \ttt{(g)lmer} model), is to simply add together the relevant fixed-effect and random-effect term. This gives each item's predicted intercept and slope \textbf{without} accounting for any item-level predictors, which is unintuitive, but easier to compute. For our example, items also differ in slope because of the \ttt{clabel.williams:voicing.passive} interaction term, and in their intercept due to the \ttt{voice.passive} term (recall that \ttt{voice.passive} is item-level). That is, items differ both because of their sentence voice and `random'  differences.  The more intuitive definition of each item's predicted intercept and slope would add in the contribution of the \ttt{clabel.williams:voicing.passive} and \ttt{voice.passive} fixed effects. `Predicted intercept for item 1' then actually means ``the log-odds predicted for this item, if we obtained more data''. An example is shown in Section~\ref{sec:by-group-effects}.
+
+For the current example, a more accurate report of the result would be, ``participants differ in the intercept, while items do not differ beyond what is expected from their voicing; items differ in the Williams effect, both due to their voicing and beyond this, while participants do not differ in the Williams effect.''
+
+\end{boxedtext}
+
+\section{Hypothesis testing}
+
+As for LMMs (Section~\ref{sec:lmm-ht}), there are several options for calculating uncertainties for MELRs---standard errors, $p$-values, and confidence intervals---in different cases of interest (fixed effects, random effects, both), which trade off between accuracy and computation time:
+\begin{itemize}
+\item Wald $z$-test
+\item Likelihood-ratio tests
+\item Parametric bootstrap
+\end{itemize}
+
+\begin{boxedtext}{Broader context: $p$-values for GLMMs}
+\label{box:glmm-p-value-caveat}
+
+The picture here is simpler than for LMMs: we don't need to worry about REML versus ML fits, and there is no method using approximate $df$ (like the Satterthwaite method, which we recommended for LMMs).  This is not because GLMM $p$-values are better-founded, but because the relevant statistical issues are less settled for GLMMs, e.g.,\ how to define a restricted likelihood or approximate $df$s \citep{bolker2009generalized,bolker2015linear}.
+%for random-effect terms.  are even less settled: i.e., how to define a restricted likelihood that makes sense,  there is no Sattherthwaite-like method to approximate $df$s because how to do this is an open research question. 
+In particular, it is not clear that there is a good reason why \ttt{glmer()} shows $p$-values while \ttt{lmer()} does not. There is not an equivalent study to \citet{luke2017evaluating} rigorously evaluating different $p$-value options for GLMMs (or MELRs).  The upshot is that one should treat $p$-values for GLMMs and LMMs with the same caveats, in both directions (Box~\ref{box:p-values-mixed-opinion}): be skeptical of exact values, but also the exact method used is unlikely to matter tremendously.  In examples below, as well as for the \ttt{diatones\_melr} model (not shown), $p$-values computed using the three methods are within a factor of 2--3.
+\end{boxedtext}
+
+\subsection{Fixed effects}
+
+Recall that for LMMs, no $p$-value is shown in the \ttt{lmer()} output, reflecting different possible methods to calculate $p$-values for fixed-effect coefficients and whether doing so is a good idea.  The picture for GLMMs is similar (Box~\ref{box:glmm-p-value-caveat}), though the methods differ slightly.
+
+\subsubsection{Wald tests}
+
+The roughest method (Section~\ref{sec:wald-z-test}) was to assume that the estimated coefficient value divided by its standard error ($\hat{\beta}/SE(\hat{\beta})$) was normally distributed, and use this to calculate a $p$-value (using a two-sided Wald test).
+
+These are the $p$-values (and SEs, $z$-values) shown by default in the \ttt{glmer()} output.  For example, for the \ttt{npType.pronoun} fixed-effect coefficient  from \ttt{givenness\_m1}:
+
+<<>>=
+tidy(givenness_m1) %>%
+  filter(effect == "fixed" & term == "npType.pronoun") %>%
+  select(-effect, -group)
+@
+
+Wald-based $p$-values are slightly more kosher than for LMMs, but they are {still approximations}---they are only correct in the limit of a large number of groups and observations, and are particularly bad for binomial data which show complete or quasi-complete separation \citep[][\S13.6.2]{bolker2015linear}.
+%\footnote{The fact that the \ttt{glmer()} output shows $p$-values while the \ttt{lmer()} output does not does not mean that the GLMM $p$-values are better---the underlying issues are similar for GLMMs, with more unknowns (e.g.,\ there is no Sattherthwaite-like method to approximate $df$s because how to do this is an open research question).} 
+
+ 
+% For GLMMs, the picture seeems simpler:  \ttt{glmer()} does show $p$-values by default (from the Wald $z$-test), there is no method using approximate $df$s (e.g.,\ Satterthwaite approximation) available, and in general you will find less debate (e.g., online) than for LMMs.  This is not because $p$-values 
+
+\subsubsection{Likelihood-ratio tests}
+\label{sec:melr-lrt}
+%% FUTURE: could rewrite using QMLD 8.7.1 text; clearer
+
+Similarly to LMMs (Section~\ref{sec:lr-test-mixed}), $p$-values from likelihood-ratio tests can be calculated by refitting the model excluding $k$ terms (fixed- or random-effect), then comparing to the full model. These are somewhat more accurate than Wald tests, but slower, as they require refitting the model. 
+
+The LR test relies on the same large-sample assumption as usual---the difference in deviance between the full and reduced model when $k$ terms are removed follows a $\chi^2_k$ distribution---and for smaller sample sizes, the $p$-values can be less accurate/anti-conservative.\footnote{A typical rule of thumb is that LR tests are only recommended when the models have 40+ levels for each grouping factor \citep{bolker2015linear}, which is often not the case for linguistic data.}
+% reader doesn't actually need to know this...
+%Nonetheless, \citet{barr2013random} recommend LR-based $p$-values ``for typically-sized psycholinguistic datasets---where the number of observations usually far outnumbers the number of model parameters'', based on a simulation study.} 
+Still, they are better than Wald tests, and are a reasonable default when writing up results for GLMMs. 
+
+\paragraph{Single terms}
+
+For example, to calculate an LR test $p$-value for the \ttt{npType.pronoun} fixed-effect term:
+
+<<output.lines=5:7>>=
+giv_m1_noNpFixef <- update(givenness_m1, . ~ . - npType.pronoun)
+anova(givenness_m1, giv_m1_noNpFixef)
+@
+
+This $p$-value is slightly higher than for the Wald test used above. 
+
+To calculate LR-based $p$-values for all fixed effects in a model, the \ttt{mixed()} function from {afex} isuseful (it just automates fitting subset models and doing model comparisons):
+
+<<>>=
+givenness_m1_lr <- mixed(stressshift ~ 
+    clabel.williams * voice.passive + npType.pronoun +
+    (1 + clabel.williams + npType.pronoun || item) +
+    (1 + clabel.williams * voice.passive + npType.pronoun || participant),
+  data = givenness,
+  family = "binomial", method = "LRT",
+control = glmerControl(optimizer = "bobyqa")
+)
+@
+
+<<output.lines=8:12>>=
+givenness_m1_lr
+@
+
+
+\paragraph{Multiple terms}
+
+An LR test can also be used to test the contribution of $k>1$ fixed-effect terms.   For example, to test whether word frequency information contributes to the \ttt{diatones\_melr} model, we would exclude the $k=3$ terms involving \ttt{frequency}:
+
+<<output.lines=5:10>>=
+diatones_melr_noFreqFixef <- update(diatones_melr, . ~ . - 
+    frequency - syll2_td:frequency - frequency:syll1_coda)
+anova(diatones_melr, diatones_melr_noFreqFixef)
+@
+
+Thus, even though no single fixed-effect involving \ttt{frequency} has a particularly low $p$-value (minimum \Sexpr{formatP(tidy(diatones_melr) %>% filter(str_detect(term, 'frequency')) %>% pull(p.value) %>% min())}),we can be confident that word frequency does help predict stress shift  (\Sexpr{lrTestReport(diatones_melr, diatones_melr_noFreqFixef)}), after controlling for word prefix.  This is a `credit assignment problem' (Section~\ref{sec:credit-assignment-ex}).
+
+The same method would work to test the contribution of a factor with 3+ levels (as in Section~\ref{sec:fact-mm-pht}, below).
+
+\subsubsection{Parametric bootstraps}
+\label{sec:log-reg-pb}
+
+The most accurate $p$-values come from parametric bootstrapping, which takes far longer.  These can be calculated the same way as for LMMs (Section~\ref{sec:parametric-bootstrapping}).
+
+\paragraph{Single terms}
+
+For example for the \ttt{npType.pronoun} term in \ttt{givenness\_m1}:
+
+<<pb-melr-sim-1, echo=FALSE>>=
+library(parallel)
+nc <- detectCores()
+cl <- makeCluster(rep("localhost", nc), setup_strategy = "sequential")
+fName1 <- "pb_givenness_1.rds"
+fName2 <- "pb_givenness_2.rds"
+
+
+fPath1 <- paste("objects/", fName1, sep = "")
+fPath2 <- paste("objects/", fName2, sep = "")
+
+doSim <- !(file.exists(fPath1) & file.exists(fPath2))
+
+
+if (doSim) {
+  givenness_m1_noNpFixef <- update(givenness_m1, . ~ . - npType.pronoun)
+
+  giv_m1_noClabelRanef <- glmer(stressshift ~ clabel.williams * voice.passive + npType.pronoun +
+    (1 + npType.pronoun || item) +
+    (1 + clabel.williams * voice.passive + npType.pronoun || participant),
+  data = givenness,
+  family = "binomial",
+  control = glmerControl(optimizer = "bobyqa")
+  )
+
+
+  ## takes a while to run -- defaults to nsim=1000
+  pb_giv_1 <- PBmodcomp(givenness_m1, givenness_m1_noNpFixef, cl = cl, nsim = 1000)
+  pb_giv_2 <- PBmodcomp(givenness_m1, giv_m1_noClabelRanef, cl = cl, nsim = 1000)
+
+
+  saveRDS(pb_giv_1, file = fPath1)
+  saveRDS(pb_giv_2, file = fPath2)
+} else {
+  pb_giv_1 <- readRDS(fPath1)
+  pb_giv_2 <- readRDS(fPath2)
+}
+
+## assumes these have been run!
+diatones_melr_pb <- readRDS("objects/diatones_melr_pb_1000.rds")
+
+diatones_melr_pb_1 <- readRDS("objects/diatones_melr_pb_1.rds")
+@
+
+
+<<eval=10>>=
+## code for running PB commented out because it takes a
+## long time (15 minutes on my laptop, on 8 cores).
+library(parallel)
+nc <- detectCores()
+cl <- makeCluster(rep("localhost", nc))
+
+pb_giv_1 <- PBmodcomp(givenness_m1, givenness_m1_noNpFixef)
+
+##  output the p-value for the PB test:
+pb_giv_1$test["PBtest", "p.value"]
+@
+
+This is higher than the values from the Wald or LR methods.
+
+\paragraph{Multiple terms}
+
+We could obtain a PB-based $p$-value for the example of excluding \ttt{frequency} and its interactions:
+
+<<eval=3>>=
+## this takes 5-10 min on my laptop
+diatones_melr_pb_1 <- PBmodcomp(diatones_melr, 
+  diatones_melr_noFreqFixef, cl = cl, nsim = 1000)
+diatones_melr_pb_1$test["PBtest", "p.value"]
+@
+
+This value is higher than the LR-based $p$-value above.
+
+
+\subsubsection{Summary}
+
+LR-based $p$-values are a reasonable default when writing up results for GLMMs, but PB-based $p$-values are better when feasible---especially if $p$ is near the significance threshold.  
+% 
+% Wald $p$-values (the default) are less accurate than LR-based $p$-values; both these methods tend to be anti-conservative, and are less accurate than PB.  Confidence intervals computed with these methods will be similar: slower methods are more accurate and less anti-conservative. 
+% %LR-based and Wald $p$-values are lestend to be anti-conservatie
+% However, the differences between methods are not huge---$p$-values are within a factor of 2--3.\footnote{As more evidence for this claim, try calculating $p$-values for all fixed-effect coefficients for the \ttt{diatones\_melr} model, using the three methods.}   These are very similar conclusions to $p$-values for LMMs (Box~\ref{box:p-values-mixed-opinion}).  
+% As there does not appear to be a systematic simulation study published evaluating different methods of obtaining $p$-values for MELR, let's consider our own examples:
+% 
+% 
+% \begin{itemize}
+% \item For \ttt{npType.pronoun}: Wald $<$ LRT $<$ PB ($p=0.04, 0.05, 0.08$)
+% \item For \ttt{frequency} + interactions: LRT $<$ PB ($p=0.003, 0.005$).
+% \end{itemize}
+% 
+% For the sake of this example we also obtain $p$-values for all fixed-effect coefficients for the \ttt{diatones\_melr} model, using the three methods, shown in this table (code not shown):
+% 
+% <<include=FALSE>>=
+% diatones_melr_lr <- mixed(formula = stress_shifted ~ syll2_coda +
+%   syll2_td + frequency + syll1_coda + syll2_td:frequency +
+%   frequency:syll1_coda + (1 | prefix), family = "binomial",
+%   method = "LRT", data = diatones)
+% @
+% 
+% 
+% <<echo=FALSE>>=
+% coefs <- rownames(diatones_melr_lr$anova_table)
+% diatones_p_df <- rbind(
+%   data.frame(coef = coefs, type = "Wald", p = tidy(diatones_melr) %>% filter(effect == "fixed" & term != "(Intercept)") %>% pull(p.value)),
+%   data.frame(coef = coefs, type = "LRT", p = diatones_melr_lr$anova_table$`Pr(>Chisq)`),
+%   data.frame(coef = coefs, type = "PB", p = diatones_melr_pb$anova_table$`Pr(>PB)`)
+% )
+% 
+% diatones_p_df %>% pivot_wider(names_from = type, values_from = p)
+% @
+% 
+% Here we find that LR $\le$ PB across all coefficients, while Wald does not pattern consistently.
+% 
+% Assuming that the PB-based $p$-values are the gold standards, these results are consistent with both LR and Wald $p$-values being less accurate, while LR-based $p$-values in particular are anti-conservative (consistent with what the literature suggests).  So it does matter what method one uses to obtain $p$-values (as well as confidence intervals, where there are similarly Wald/LR/PB methods), with slower methods generally being more accurate/less anti-conservative. However, the differences between methods are not huge---$p$-values are within a factor of 2--3, though they straddle (arbitrary) $\alpha = 0.01$ or 0.05 values.  These are very similar conclusions to $p$-values for LMMs (Box~\ref{box:p-values-mixed-opinion}).  
+% 
+% LR-based $p$-values are a reasonable default when writing up results for GLMMs, but PB-based $p$-values are better when feasible (especially if $p$ is near the significance threshold).
+
+%, for $p$-values for LMMs, and the same discussion applies. 
+
+\subsection{Random effects}
+
+For obtaining $p$-values for random-effect terms in GLMMs, two of the methods used for LMMs work (Section~\ref{sec:lmm-ht-ranef}): LR tests and PB, with LR-based $p$-values conservative by the same logic as for LMMs (Section~\ref{sec:exact-lrt}).\footnote{At the time of writing there is no stable package for testing variance components in GLMMs using `exact' tests, intermediate between LR tests and PB (like {RLRsim} for LMMs).}
+%This is an active research area \citep{chen2019approximate}.}
+
+For example, we can assess whether items significantly differ in the \ttt{clabel.williams} effect in model \ttt{givenness\_m1}, using an LR test to compare the models with and without the by-item \ttt{clabel.williams} random slope:
+
+<<output.lines=5:10>>=
+giv_m1_noClabelRanef <- glmer(stressshift ~
+    clabel.williams * voice.passive + npType.pronoun +
+    (1 + npType.pronoun || item) +
+    (1 + clabel.williams * voice.passive + npType.pronoun || participant),
+  data = givenness, family = "binomial",
+  control = glmerControl(optimizer = "bobyqa")
+)
+
+anova(givenness_m1, giv_m1_noClabelRanef)
+@
+
+We could alternatively compare the models using PB:
+
+<<eval=5>>=
+## takes ~15 minutes on my laptop (on 8 cores)
+pb_giv_2 <- PBmodcomp(givenness_m1, giv_m1_noClabelRanef, 
+  cl = cl, nsim = 1000)
+
+##  output the p-value for the PB test:
+pb_giv_2$test["PBtest", "p.value"]
+@
+
+Note that the LR-based $p$-value is higher, as expected (it is conservative). By either method (with $\alpha=0.05$), we would conclude that items do not significantly differ in the Williams effect.
+%but using the more accurate method we would probably claim items `marginally' differ. 
+
+\subsection{Other}
+
+We do not cover other aspects of hypothesis testing for GLMMs,  as they are very similar to LMMs:
+
+\paragraph{Fixed and random effects}
+
+The contribution of fixed + random effects could also be tested, using LR tests or PB, as for LMMs (Section~\ref{sec:lmm-fixed-and-random}). Examples are below (Section~\ref{sec:melr-model-comparison}).
+%For example, adding information about item voicing (\ttt{voicing.passive}) turns out to significantly improve model \ttt{givenness\_m1}---even though the population-level (fixed) effect is not significant (this model comparison is done below: Section~\ref{sec:melr-model-comparison}).
+%  QMLD 8.4 end).
+
+\paragraph{Confidence intervals}
+
+As for LMMs (Section~\ref{sec:conf-int-lmms}), calculating confidence intervals is straightforward using \ttt{confint}, with the progressively more accurate/slower Wald, profile likelihood (the default), and PB methods.
+
+%Based on our discussion of $p$-values above:
+For fixed effects, we would expect the more accurate methods to give progressively wider confidence intervals, corresponding to less anti-conservative $p$-values.\footnote{Note that profile likelihood-based CIs are closely related to LR-based $p$-values.}  For random- effect terms (variance components), we would expect profile likelihood to give wider confidence intervals than PB, corresponding to more conservative $p$-values.
+
+% seemed cuttable -- exercise says it.
+%One application of confidence intervals for our examples would be to evaluate whether words with different prefixes do in fact differ (the by-prefix intercept) in \ttt{diatones\_melr} (Exercise~\ref{ex:diatones-ranef}), by checking whether the confidence interval includes 0.
+
+\section{Model summaries}
+\label{sec:melr-model-summaries}
+
+As for LMMs (Section~\ref{sec:lmm-model-summaries}), we can define quantitative summaries of GLMMs, such as goodness-of-fit measures or information criteria.  An important difference from LMMs is that that none of these metrics are useful in isolation (as opposed to e.g.,\ $R^2$ measures for LMMs), because they do not have a straightforward interpretation.  They can only be used to compare models of the same data---either a full model versus\ a baseline model, or different candidate models.
+
+\subsection{Goodness of fit}
+
+As for logistic regression (Section~\ref{sec:gof-logistic}), we consider pseudo-$R^2$ and classification-based measures of goodness of fit.  
+
+\subsubsection{Pseudo-$R^2$ measures}
+
+Defining $R^2$-like measures of goodness of fit for mixed-effects logistic regression models inherits the issues with defining such measures for logistic regression and LMMs: (1) defining `variance explained', given there are no residuals for logistic regressions; (2) there are different possible ways to define `variance explained' for a mixed-effects model.
+
+Recall that (2) was addressed for LMMs using the `marginal' and `conditional' measures $R^2_m$ and $R^2_c$ (Section~\ref{sec:r2-lmm}; \citealp{nakagawa2013general,johnson2014extension,nakagawa2017coefficient}), which  use the fitted variance components to quantify  ``variance explained by fixed effects'' and ``variance explained by fixed and random effects'' in one particular way.  Their definition extends to GLMMs, by defining a `residual variance' for each kind of GLM (which addresses (1)). An important difference from $R^2$ for LMMs is that $R^2$ values for GLMMs, including MELRs, are $0 \le R^2 < 1$: they can never reach 1, and tend to be lower (closer to 0) than for comparable LMMs.\footnote{\label{fn:r2-glmm} For logistic regressions, the `residual variance' can be defined in two different ways \citep[][\S7]{nakagawa2017coefficient}, which correspond to the `theoretical' and `delta' values outputted by \ttt{r.squaredGLMM()}. This variance goes in the denominator of $R^2_m$ and $R^2_c$, as extra variance that can never be `explained' \citep[][138]{nakagawa2013general}, hence $R^2_m$ and $R^2_c$ are always $<1$.}  
+% repetitive?
+%In part for this reason, they can only be roughly interpreted as `proportion of variance explained', and instead should be thought of as metrics of goodness-of-fit to compare different models of the same data.
+
+We can again use the \ttt{r.squaredGLMM()} function from {MuMIn} to compute  $R^2_m$ and $R^2_c$. For exposition, let's consider three MELR models for the \ttt{givenness} data: 
+\begin{enumerate}
+\item[M1:] A baseline model without fixed effects (random intercepts only:  \ttt{givenness\_m0})
+\item[M2:] A model without random slopes (\ttt{givenness\_m2})
+\item[M3:] The model with random slopes (\ttt{givenness\_m1})
+\end{enumerate}
+
+
+We first fit models M1 and M2:
+<<>>=
+givenness_m0 <- update(givenness_m1, . ~ (1 | participant) + 
+    (1 | item))
+givenness_m2 <- update(givenness_m1, . ~ 
+    clabel.williams * voice.passive + npType.pronoun + (1 | item) + 
+    (1 | participant))
+@
+
+To calculate $R^2_m$ and $R^2_c$ for the three models:
+
+<<>>=
+# baseline model
+r.squaredGLMM(givenness_m0)
+
+## model without random slopes
+r.squaredGLMM(givenness_m2, null = givenness_m0)
+
+## model with random slopes
+r.squaredGLMM(givenness_m1, null = givenness_m0)
+@
+
+The `theoretical' and `delta' rows use different methods to address (1) (see footnote~\ref{fn:r2-glmm}). 
+%It isn't  a problem that they differ, but this does illustrate that the absolute values of $R^2$ measures for GLMMs are somewhat arbitrary. 
+Here we just consider the `theoretical' values. 
+
+Comparing the $R^2_m$ and $R^2_c$ measures for these models, we see: 
+\begin{itemize}
+\item $R^2_c$ is much higher in M2 and M3 than in M1:  adding information about the predictors, whether as fixed or random effects, improves greatly over the baseline. 
+\item $R^2_c - R^2_m$ is much smaller in M2 than in M3: most of the explanatory power of random effects for this data comes from random slopes; little comes from random intercepts. 
+\item $R^2_m$ is similar for M2 and M3, while $R^2_c$ is  higher for M3: adding in random slopes doesn't change the `variance explained' by fixed effects, but does increase the overall `variance explained'.
+\end{itemize}
+
+On point (1): note that $R^2_m=0$ always for a baseline model, because it contains no fixed effects, so only $R^2_c$ is meaningful to compare with the baseline.  It is a fluke for this data that $R^2_c=0$ for the baseline model.   Usually it will be larger than 0.   Exercise~\ref{ex:r2-cdi} gives an example, using the French CDI data.
+% where $R^2_c$ is only slightly larger for the full model than for the baseline model, meaning that a lot of variability in which words are produced is from the word and the child, but for the most part we don't know \ul{what} about the word and the child 
+
+%% FUTURE: un-hard code, if example kept in
+% For example, for the model of the French CDI data we fit below (\ttt{cdi\_mod}: Section~\ref{sec:melr-nonlin}), $R^2_c = 0.70$, compared to $R^2_c = 0.68$ for the baseline model.   This means that a lot of the variability in which words are produced is predictable from the word and the child, but for the most part we don't know \ul{what} about the word and the child (or if this is truly random variation).  The word-level and child-level predictors in the model (e.g., \ttt{lexical\_class}, \ttt{sex}) explain very little (Exercise~\ref{ex:r2-cdi}).
+
+% 
+% This means that much of the variability in which words are produced is predictable from the word and the child, but we don't know *what* about the word and the child (or if this is truly random variation). The word's lexical class and child's sex together explain very little.
+% 
+
+
+\subsubsection{Classification-based measures}
+
+As for non-mixed-effects logistic regression, we can alternatively measure goodness of fit by evaluating the MELR model's performance as a classifier.  Two measures we ended up considering were accuracy (more intuitive, but sensitive to class sizes), and AUC (less intuitive, better-founded).
+
+I have not found a good discussion of classification-based metrics for GLMMs (including MELRs), but assume that we run again into issue (2) above: different accuracy/AUC/etc. values can be defined, depending on what predictions from the model are used.  We could define `marginal' and `conditional' values, based on predictions from just the fixed effects or the fixed and random effects (held at their most likely values). 
+
+% AUC implementations 
+% %I have found 
+% for R seem to do the latter.
+
+For example, \ttt{auc()} from the {ModelMetrics} package computes the latter. For the \ttt{diatones\_melr} model and its corresponding baseline (\ttt{diatones\_melr\_0}), (conditional) AUC is:
+
+<<>>=
+diatones_melr_0 <- update(diatones_melr, . ~ (1 | prefix), 
+  control = glmerControl(optimizer = "bobyqa"))
+auc(diatones_melr_0)
+auc(diatones_melr)
+@
+
+We see that the full model has high predictive power (on the original dataset), but some of this comes from simple by-prefix variability (the baseline model's AUC is well above 0.5).
+
+We could also calculate `conditional accuracy' (in the sense defined in Section~\ref{sec:class-based-measures}) and `marginal accuracy' by writing a simple function:\footnote{This code adapts \ttt{performance\_pcp} from the performance package, which does not work for \ttt{glmer()} models at present.}
+%and I have not found a stable alternative.}
+
+<<>>=
+melr_acc <- function(mod, type = "conditional") {
+  ## conditional or marginal R2?
+  stopifnot(type %in% c("conditional", "marginal"))
+  ## type='resp':  predictions from fixed + ran ef;
+  ## type='response': preds from just fixed eff
+
+  ## predicted responses: 0/1
+  resps <- mod@resp$y # 0/1
+  ## predicted probabilties
+  if (type == "marginal") {
+    probs <- predict(mod, type = "response", re.form = NA)
+  } else {
+    probs <- predict(mod, type = "response")
+  }
+  ## 'expected accuracy': see ?performance_pcp
+  mean(resps * probs + (1 - resps) * (1 - probs))
+}
+
+melr_acc(diatones_melr)
+melr_acc(diatones_melr_0)
+@
+
+We see that the full model has conditional accuracy around \Sexpr{melr_acc(diatones_melr)}, which improves on the baseline model.
+
+It would also be possible to define `marginal' versions of AUC and accuracy by hand (Box~\ref{box:marginal-auc-acc}).
+
+\begin{boxedtext}{Practical note: More on GLMM classification measures}
+\label{box:marginal-auc-acc}
+
+We can compute marginal accuracy by using predicted probabilities based on fixed effects only (= marginalizing over the random effects). The \ttt{melr\_acc} function does this:
+
+<<>>=
+melr_acc(diatones_melr, type = "marginal")
+melr_acc(diatones_melr_0, type = "marginal")
+@
+
+
+We can calculate AUC for any set of $n$ predicted probabilities ($\hat{p}_i$), corresponding to $n$ observations of 0 or 1 ($y_i$), using the \ttt{auc()} function. For marginal AUC, we use the predicted probabilities based on fixed effects only:
+
+<<>>=
+## predicted responses: 0/1
+resps <- diatones_melr@resp$y
+
+## predictions without random effects:
+## full and baseline models
+probs <- predict(diatones_melr, type = "response", re.form = NA)
+probs_0 <- predict(diatones_melr_0, type = "response", re.form = NA)
+
+## AUC for full model:
+auc(resps, probs)
+## AUC for baseline model:
+auc(resps, probs_0)
+@
+
+Both AUC and accuracy for \ttt{diatones\_melr} are lower than the conditional values, and better indicate what we would expect applying the model to unseen data (a new  word).
+
+Reporting these `marginal' AUC/accuracy values in addition to the `conditional' values makes sense to me, by the same logic as for $R^2$ for linear mixed models (Section~\ref{sec:r2-lmm}), given that they convey different information and we are often most interested in `average' (fixed) effects.
+%and we are often most interested in fixed effects (i.e.,\ how well does the model predict $y$ for an average participant/item?).  
+But I have not yet found discussion of this issue, and it seems cumbersome to report four values (conditional/marginal $\times$ full model/baseline). Reporting just the marginal or conditional values, depending on which makes more sense given your research questions, seems OK if there isn't space.
+
+\end{boxedtext}
+
+\subsubsection{By-group goodness-of-fit}
+
+All measures above (accuracy, etc.) are observation-level: they evaluate the model's performance on classifying observations.  These are easiest to report, but often we are interested in generalizing to new levels of the grouping factor (e.g.,\ a new participant for the \ttt{givenness} data)---not observations, per se.   It is possible to examine any of these measures by participant or item, to get a sense of whether the model fits some levels much better than others, and how the model might predict for a new participant/item.\footnote{It would be better to examine these questions by simulating {new} participants/items, but this is more involved; see e.g., \ttt{simulate.merMod()}, functionality in the {merTools} package.}
+
+For example, this code calculates (conditional) accuracy for model \ttt{givenness\_m1} on data from each participant and item:
+
+<<>>=
+## original dataframe with predictions added
+giv_df <- fortify.merMod(givenness_m1) %>%
+  mutate(prob = plogis(.fitted))
+
+# 0/1 responses
+giv_df$resp <- givenness_m1@resp$y
+
+# by-participant accuracy
+giv_by_par_df <- giv_df %>%
+  group_by(participant) %>%
+  summarise(acc = mean(resp * prob + (1 - resp) * (1 - prob)))
+
+# by-item accuracy
+giv_by_item_df <- giv_df %>%
+  group_by(item) %>%
+  summarise(acc = mean(resp * prob + (1 - resp) * (1 - prob)))
+@
+
+Their distributions are plotted in Figure~\ref{fig:giv-by-par-item}.  There is considerable variability in accuracy for different participants and items, relative to the `overall' accuracy (solid lines: \Sexpr{melr_acc(givenness_m1)}), but all are above baseline accuracy  (dotted lines: \Sexpr{melr_acc(givenness_m0)}).
+
+
+% - Considerable variability in accuracy for diff partic/items, but all well above baseline .
+
+
+<<giv-by-par-item, echo=FALSE, fig.width=4, fig.height=3, out.width='40%', fig.cap='Histogram of (conditional) accuracy of model \\ttt{givenness\\_m1} by-participant (left) and by-item (right). Dotted and solid lines are baseline and full model accuracies.'>>=
+baseline_acc <- melr_acc(givenness_m0)
+mod_acc <- melr_acc(givenness_m1)
+
+giv_by_par_df %>% ggplot(aes(x = acc)) +
+  geom_histogram(binwidth = 0.05, fill='darkgrey') +
+  geom_vline(aes(xintercept = baseline_acc), lty = 2, size=0.75) +
+  geom_vline(aes(xintercept = mod_acc), color = default_line_color, size=0.75) +
+  xlab("Accuracy") +
+  ylab("Count") +
+  ggtitle("By-participant")
+
+giv_by_item_df %>% ggplot(aes(x = acc)) +
+  geom_histogram(binwidth = 0.05, fill='darkgrey') +
+  geom_vline(aes(xintercept = baseline_acc), lty = 2, size=0.75) +
+  geom_vline(aes(xintercept = mod_acc), color = default_line_color, size=0.75) +
+  xlab("Accuracy") +
+  ylab("Count") +
+  ggtitle("By-item")
+@
+
+
+
+
+\subsection{Information criteria}
+
+The information criteria defined for LMMs in Section~\ref{sec:lmm-information-criteria} (marginal and conditional AIC, AICc, BIC, etc.) are defined similarly for GLMMs---with similar caveats on how a model's degrees of freedom are counted, which is more uncertain for GLMMs than for LMMs (e.g.,\ \citealp[][]{glmmfaq} `Model selection').  These criteria are nonetheless widely used for GLMMs, particularly the `marginal' versions of AIC/AICc/BIC.  These are computed the same way for GLMMs as for LMMs (\ttt{aic()}, \ttt{bic()} default for \ttt{glmer()} models; \ttt{AICc()} from the {MuMIn} package), and can be used for model comparison (i.e.,\ as an alternative to likelihood-ratio tests).
+
+% For example, to compare the models of the \ttt{diatones} data with and without the by-prefix random intercept:
+% 
+% <<>>=
+% AIC(mlogreg_mod_3, diatones_melr)
+% MuMIn::AICc(mlogreg_mod_3, diatones_melr)
+% BIC(mlogreg_mod_3, diatones_melr)
+% @
+% 
+
+
+
+
+% 
+% (especially for It is even less clear for GLMMs how to define
+% sec:lmm-information-criteria
+% - These are defined similarly to LMMs (mAIC, cAIC, BIC, etc.), with similar caveats.
+% 
+% - Probably 
+
+% I haven't read a discussion of defining these measures for MELR models, but assume we run into the same issue as with LMMs: there is no longer a single ``accuracy'' (or AUC, etc.) because the model makes predictions at several levels.  
+% 
+% You can get accuracy and AUC numbers using e.g., `performance_accuracy' and `auc' from the `performance' and `ModelMetrics' packages, respectively.  I assume what these are doing is a ``conditional'' version of accuracy: just examine the model's predictions using both fixed and random effects (held at their most likely values).
+% 
+
+\section{Model validation}
+\label{sec:melr-model-validation}
+
+The issues motivating model validation for MELRs are similar to non-mixed-effects logistic regressions and LMMs (Section~\ref{sec:model-validation-logreg}, \ref{sec:model-validation-lmms}), and the methods covered there broadly apply: residual plots using deviance/binned residuals, checking for influential participants/items, and so on.  We will therefore not go into much detail here, but do show a couple examples where there is something new to say. 
+
+% 
+% - Broadly similar to logistic regressions and LMMs---so won't say as much here. The same methods covered in A and B broadly apply.
+% We show a couple examples here, where there is something new to say.
+
+\subsection{Scaled residuals}
+
+Recall that residuals must be defined for a logistic regression model to perform model validation.  The most common option is  (binned) deviance residuals (Section~\ref{sec:log-reg-residuals}); these can also be defined for an MELR model (e.g.,\ the \ttt{.resid} column of \ttt{fortify.merMod(myModel)}), and used to make fitted-residual plots, etc.  Unlike LMMs, R functionality to automate this process is limited for GLMMs, but this is an active development area and more should become available in the coming years.\footnote{Some functionality is available in the {performance} package, e.g., \ttt{binned\_residuals()}.} 
+
+%Ex:  `residuals' must be re-defined for GLMs. One option is using binned (deviance) residuals.  These can then be used to make residual plots, diagnostic tests, etc---similarly to LMMs.
+
+% 
+% 
+% 1. Quantile residuals
+% 
+% -   Defining residuals: one option is above.  Functionality increasingly available for this (e.g., \ttt{binned\_residuals}), more likely in coming years. 
+
+An intriguing alternative method for defining residuals for (G)LMMs is \emph{scaled (quantile) residuals}, which have an excellent implementation in the {DHARMa} package \citep{DHARMa}, including a thorough vignette,
+%(``DHARMa: residual diagnostics for hierarchical (multi-level/mixed) regression models''), 
+from which we are paraphrasing.
+%is essential reading to use this method.
+
+% - An intriguing alternative method for (G)LM(M)s is *quantile residuals*, which have an excellent implementation in the \texttt{DHARMa} package \citep{DHARMa}, with a thorough vignette (``DHARMa: residual diagnostics for hierarchical (multi-level/mixed) regression models'') which is required reading if you use these.
+%which provides a detailed introduction and worked examples. 
+
+Scaled residuals are defined by simulating from the fitted model, as in Section~\ref{sec:pred-val-uncert-lmm}.  For each observation $i$, $n$ new values are simulated of the fitted value ($\hat{y}_i$), to obtain a distribution.  The `residual' $\epsilon_i$ is how far out on this distribution the observed value $y_i$ lies, as a quantile ($0 \le \epsilon_i \le 1$): $\epsilon_i= 0.1$ means  10\% of the distribution is below $y_i$, 0.5 means 50\%, and so on.\footnote{``Simulating from the model'' can mean several things. By default DHARMa re-simulates all random effects, i.e., every participant gets a new random intercept value in each of the $n$ simulations.}
+
+The expected distribution of the scaled residuals $\epsilon_i$, if the model is correct, is uniform on $[0,1]$, regardless of the model structure (existence of random effects, GLM vs.\ LM, etc.): we expect 1\% of them to lie between 0.60 and 0.61, and so on.  These residuals can thus be used for all the same diagnostics as linear regression, using `uniform' as the reference distribution rather than normal.
+% 
+% - The *expected* distribution of these \emph{quantile residuals} is *uniform* (on 0/1), regardless of the model structure (random effects, GLM or LM, and so on); see Gelman \& Hill for more explanation.  These residuals can thus be used for all the usual diagnostics as linear regression, using ``uniform'' as the reference distribution rather than ``normal''.
+
+For example, let's generate scaled residuals for model 
+ \ttt{givenness\_m1} (with $n = 250$, by default):
+
+<<>>=
+sim <- simulateResiduals(givenness_m1, plot = F)
+@
+
+
+Figure~\ref{fig:dharma-1} shows Q-Q plots using these residuals (left: using the \ttt{plotQQunif()} function) and  deviance residuals (right), judged against a uniform (left) or normal (right) distribution.
+
+<<dharma-1, echo=FALSE, fig.asp=1, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap='Q-Q plots for model \\ttt{givenness\\_m1}, using scaled (left) and deviance (right) residuals.'>>=
+plotQQunif(sim, testDispersion = F) ## DHARMa function
+## testDispersion = F: suppressed a test for over/underdispersion 
+## which is done by default, as this is not relevant for a logistic 
+## regression with 0/1-valued responses
+fortify.merMod(givenness_m1) %>% ggplot(aes(sample = .resid)) +
+  stat_qq() +
+  stat_qq_line() +   xlab("Theoretical quantiles") +
+  ylab("Deviance residuals")
+@
+
+The scaled residual plot is more useful: it does not indicate significant deviation from uniformity (a line), which is confirmed by a quantitative measure (a Kolmogorov-Smirnov test, used to check deviation from a reference distribution). Also shown is a summary of a test for outliers (\ttt{testOutliers()}), which we'd want to check for anyway.
+%\footnote{We have suppressed a test for over/underdispersion which is done by default, as this is not relevant for a logistic regression with 0/1-valued responses.}  
+The deviance residual Q-Q plot is less useful because it always shows two curves, corresponding to 0 and 1 predictions, even for a correct model.
+
+
+% - It's clear that the quantile residual plot is more useful; doesn't indicate big deviations.  Confirmed by quantitative summary--- K-S test (as used to test normality; now to test uniformity).  Also shown by deafult are summaries of tests for outliers and for over/underdispersion (\ttt{testOutliers}, \ttt{testDispersion}), which we'd want to check for anyway.
+As another example,  Figure~\ref{fig:dharma-2} shows fitted-vs residual plots using scaled residuals (left: using \ttt{plotResiduals()}) and binned deviance residuals (right). 
+%Code for the left plot is:
+In the scaled residual plot, we expect a roughly equal distribution on the $y$-axis from 0 to 1, regardless of the fitted value ($x$-axis); the plotted lines are 0.25/0.5/0.75 quantiles, and should all be flat.  The plot suggests no major issues. This is easy to judge visually with one point per observation.
+
+
+<<dharma-2, echo=FALSE,  fig.asp=0.9, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap='Fitted-residual plots for model \\ttt{givenness\\_m1} using scaled residuals (left) and binned deviance residuals (right).'>>=
+## DHARMa function
+## asFactor: just makes it treat the x-axis as continuous
+plotResiduals(sim, asFactor = FALSE)
+
+## plot fitted vs. binned deviance residuals
+fortify.merMod(givenness_m1) %>%
+  group_by(bins = cut(.fitted, breaks = 10)) %>%
+  summarise(fitted = mean(.fitted), resid = mean(.resid), n = n()) %>%
+  ggplot(aes(x = fitted, y = resid)) +
+  geom_point(aes(size = sqrt(n))) +
+  xlab("Fitted values") +
+  ylab("Binned deviance residuals")
+@
+
+
+The deviance residual plot is harder to interpret. We expect the residuals to show roughly constant mean and variance for a correct model (as in Section~\ref{sec:log-reg-residuals}), which is probably not the case here. But unfortunately deviations are also common for correctly specified models, and in any case with so few points (= bins) it is hard to judge.  This kind of plot can be more useful for larger datasets where more bins are used (Exercise~\ref{ex:cdi-resids}).
+%% Exercise: show binned_residuals, for cdi_m2. More useful.
+
+The DHARMa vignette shows other useful plots/tests, such as predictor-residual plots. 
+
+% FUTURE: revisit this section... should show something you *can* detect with residual tests, or just admit I don't know how to use them properly / they're not so useful, and remove / give refs.  Alternatively -- just show the DHARMa residual plots.  Say in this case, no issues detected.
+% 
+% Possible exercise: run some of these on CDI mod2.
+
+
+\subsection{Random effects: Influence}
+\label{sec:giv-inf-example}
+
+
+As for LMMs, an important model validation step for the random effects is checking for influential groups (e.g.,\ participants, items).
+
+% - As for LMMs, could examine Q-Q plots for normality of random effects. Works similarly for GLMMs, and as argued there, rarely matters if we care about fixed effects.
+
+% More important is checking for influential participants and items.
+
+%\subsubsection{Example}
+
+For example: for \ttt{givenness\_m1}, we saw that items vary a lot in the key \ttt{clabel.williams} effect of interest (Figure~\ref{fig:givenness-preds-1}), so it makes sense to check by-item influence. We can calculate influence diagnostics as for LMMs, then extract two of interest: Cook's distance, and DFBETA for the \ttt{clabel.williams} effect.
+
+<<output.lines=1:4>>=
+giv_inf_item <- influence(givenness_m1, "item")
+cw_betas <- data.frame(dfbetas(giv_inf_item))[, "clabel.williams"]
+
+item_inf_df <- data.frame(
+  item = giv_inf_item$deleted,
+  clabel.williams = cw_betas,
+  CD = cooks.distance(giv_inf_item)
+)
+item_inf_df
+@
+
+
+<<giv-item-inf, echo=FALSE, fig.asp=0.8, out.width='40%', fig.width=default_fig.width*.40/default_out.width,  fig.cap='Dotplots of measures of influence of each item on the fixed effects of model \\ttt{givenness\\_m1}: Cook\'s distance (left) and DFBETA for the \\ttt{clabel.williams} coefficient (right). Vertical lines are $Q_3 + 3 \\cdot IQR$ cutoffs.'>>=
+internalCutoff <- function(k) {
+  quantile(k, 0.75) + 3 * IQR(k)
+}
+
+item_inf_df %>% ggplot(aes(x = CD, y = reorder(item, CD))) +
+  geom_point() +
+  geom_vline(aes(xintercept = internalCutoff(CD)), lty = 2) +
+  xlab("Cook's distance") +
+  scale_y_discrete(name = "Item")
+
+item_inf_df %>% ggplot(aes(x = abs(clabel.williams), y = reorder(item, abs(clabel.williams)))) +
+  geom_point() +
+  geom_vline(aes(xintercept = internalCutoff(abs(clabel.williams))), lty = 2) +
+  xlab("|DFBETA| for Speaking rate") +
+  scale_y_discrete(name = "Item")
+@
+
+Figure~\ref{fig:giv-item-inf} plots these, as for LMMs in Figure~\ref{fig:influence_plot_lmm_2}  (dotplots with $Q_3 + 3 \cdot IQR$ cutoffs). There is one item with high CD (16). The two items with high $|DFBETA|$ are 5 and 16---these are visually separate, though neither is above the cutoff. 
+
+To see what effect these items have on the model, consider the fixed-effect coefficients before and after excluding item 16 (using \ttt{compareCoefs} from the car package):
+
+%It Can check that excluding any of these makes the \ttt{clabel.williams} effect *stronger*, e.g.,
+
+<<output.lines=13:22>>=
+compareCoefs(givenness_m1, update(givenness_m1, 
+  subset = item != "16"), zvals = TRUE)
+@
+
+The \ttt{clabel.williams} effect is {stronger} when this item is excluded: it has a larger effect size and similar $z$ (and thus $p$).  It turns out that other influential items and participants have the same effect on the model (Exercise~\ref{ex:giv-inf}).  So we can be confident that the effect of interest is robust.   When writing up the model, this should be reported (briefly), for example: ``To assess robustness of the key \ttt{clabel.williams} effect, we checked  for influential participants and items (visual inspection of Cook's distance and DFBETA), and found that refitting the model without these groups gave a {stronger} effect (higher $\hat{\beta}$, similar $z$).''  
+
+This differs from our LMM influence example in Section~\ref{sec:lmm-ranef-influence}, where we found the effect was driven by a couple speakers. 
+% The $p$-values from the Wald, LR, PB methods are 0.047, 0.059, \Sexpr{pb_giv_1$test['PBtest','p.value']}.  If we assume that the PB method best approximates  This is consistent with the true $p$-value being closer to 0.1, and the faster methods giving progressively less accurate / more anti-conservative $p$-values. 
+% 
+% However, `more accurate' can also lead to lower $p$-values.  Compare LR-based $p$-values for the fixed effects in model \ttt{diatones\_melr} to the Wald $p$-values above:
+% 
+% <<>>=
+% ##  instead just wrap the two in a nice table: estimate, p-Wald, p-LR
+% diatones_melr_lr <- mixed(
+%   stress_shifted ~ syll2_coda + 
+%                          syll2_td + frequency + syll1_coda + syll2_td:frequency +
+%                          frequency:syll1_coda + (1|prefix), family = "binomial", method='LRT', data = diatones)
+% diatones_melr_lr
+% @
+% 
+% <<>>=
+% tidy(diatones_melr) %>% filter(effect=='fixed') %>% select(term, estimate, p.value)
+% @
+
+
+
+
+
+% As in logistic regresson, the response $y$ can take on values 1 or 0; we model the log-odds that $y$ is 1. For example (e.g.,)
+% 
+% \begin{itemize}
+% \item
+%   \textbf{Logistic regression}: we model a binary response, $y$, which takes on values 1 or 0 (e.g.,\ \ttt{stress\_shifted}=1, 0)
+%  \item Model the log-odds that $y$ happens ($P(y=1)$)
+% \item \textbf{Fixed effects}
+% 
+%   \begin{itemize}
+%   \item
+%     ``Predictors'' from logistic regression, now called ``fixed effects''
+% 
+%     \begin{itemize}
+%     \tightlist
+%     \item
+%       Ex: \texttt{speechrate}, \texttt{vowelduration}, \texttt{syntax}
+%     \end{itemize}
+%   \item
+%     Capture effect of each predictor across participants/items.
+%   \end{itemize}
+% \item
+%   \textbf{Random effects}
+% 
+%   \begin{itemize}
+%   \item
+%     Capture by-participant/item variability
+%   \item
+%     Ex: in overall tapping rate (``random intercept''), in the effect of a predictor across participants (``random slope'') or items.
+%   \end{itemize}
+% \end{enumerate}
+% 
+% Remember that logistic regression models the \textbf{log-odds} of a ``hit'' (\(Y=1\)) as a function of predictors. Not the number of hits, the probability of a hit, or anything else.
+
+% 
+% \section{Mixed-effects logistic regression}
+% 
+% - Basic ingredients are the same as pieces we've seen so far (adapt from 8.1 beginning, also 8.2 as we go along).
+% 
+% ---
+% 
+% 
+
+
+
+\section{Nonlinear and factor effects}
+\label{sec:melr-nonlinear}
+
+In this and the next section, we turn to `practical' topics  which we already introduced for non-mixed models (mostly in Chapter~\ref{chap:practical-regression-topics}) but have avoided so far for LMMs and GLMMs: multi-level factors, post-hoc tests, nonlinear effects, and variable importance.
+
+Much of this functionality extends straightforwardly to the mixed model context, but examples may be useful.
+
+% - Show some functionality already introduced for non-mixed models, in MM context: multi-level factors, post-hoc tests, nonlinear effects, variable importance.
+% 
+% - functionality mostly extends straightforwardly, but examples may be useful.
+% FUTURE: shorten the next sections? No point elaborating when things are the same.
+
+\subsection{CDI data}
+\label{sec:cdi-data-new}
+
+% 
+% load("data/uni_joined.RData")
+% 
+% fr_lex_info <- uni_joined %>% filter(language=='French (Quebec)') %>% filter(!duplicated(uni_lemma)) %>%
+%   select(-age, -num_true, -num_false, -prop) %>% unnest(cols=items)  
+% ## for each row of french_cdi_24, add lexical info
+% french_cdi_24 <- left_join(french_cdi_24, fr_lex_info)
+% ## and standardized log num phones
+
+We return to the \ttt{french\_cdi\_24} data, but now for 
+%from Chapter~\ref{chap:practical-regression-topics},
+%but now for 
+{all} children (aged 24 months), rather than restricting to a single child.  This lets us consider child-level variability. First, process the data similarly to Section~\ref{sec:french-cdi}:
+%( but without restricting to one child): 
+<<>>=
+## exclude lexical_class = other
+french_cdi_24 <- french_cdi_24 %>%
+  filter(lexical_class != "other") %>%
+  mutate(child = as.factor(data_id)) %>%
+  droplevels() %>%
+  tibble()
+
+## set lexical_class to intuitive order
+french_cdi_24 <- french_cdi_24 %>%
+  mutate(lexical_class = fct_relevel(
+    lexical_class,
+    "function_words", "verbs", "adjectives", "nouns"
+  ))
+@
+
+%which is the only child-level predictor available.   (but further child-level predictors would be possible). 
+The research question remains how a word's \ttt{lexical\_class} (factor with 4 levels) affects its probability of being produced (\ttt{produced}: values 0, 1), in particular `noun bias' and `function word bias'.  As control predictors we include child \ttt{sex}, as well as three  properties of words---(log) frequency (\ttt{frequency}), length in phones (\ttt{num\_phons}), and mean utterance length (\ttt{MLU})---which we make standardized versions of:
+
+<<>>=
+french_cdi_24 <- french_cdi_24 %>%
+  mutate(
+    ## frequency: already log-transformed
+    freq.std = rescale(frequency),
+    ## log-transform num_phons due to right-skewed distribution
+    log_nphones.std = rescale(log(num_phons)),
+    MLU.std = rescale(MLU)
+  )
+@
+
+%(We first log-transform \ttt{num\_phons} because its distribution is right-skewed; \ttt{frequency} is already log-transformed.)  
+Intuitively, words which are more frequent, shorter, or tend to appear in shorter utterances are expected to be acquired earlier.
+
+These predictors are only defined for about half of the words, to which we restrict the data for convenience:
+%% 294 defined vs. 243 undefined
+%These controls are only defined for about half (?) of words, so we restrict just to words where these restrict just to words where they aren't NA:
+
+<<>>=
+# Restrict to words where frequency, num_phones not NA
+french_cdi_24 <- filter(french_cdi_24, 
+  !(is.na(freq.std) | is.na(log_nphones.std) | is.na(MLU.std)))
+@
+
+The resulting dataset is $n=\Sexpr{nrow(french_cdi_24)}$ observations, from $J=\Sexpr{length(unique(french_cdi_24$child))}$ children (\ttt{child}) and $K=\Sexpr{length(unique(french_cdi_24$definition))}$ words (\ttt{definition}); these are the grouping factors.  
+% 
+% - Predictors: sex, lexical\_class (as in chap. 7); now also consider two other properties of the word: its frequency, and its length in phones---both correlated with lexical class.  Standardized versions of these:
+
+We also explicitly set the contrasts for two factors which will be predictors in our models (discussed in Section~\ref{sec:motivation-grouped}):
+
+<<>>=
+contrasts(french_cdi_24$lexical_class) <- contr.helmert(4)
+contrasts(french_cdi_24$sex) <- contr.helmert(2)
+@
+
+% This is necessary, even though we have set unordered factors to default to Helmert contrasts (at the beginning of the chapter), in order for model predictions to work correctly in all cases.
+% Rather than go into the underlying reason, which is very technical (and perhaps even a bug, to be fixed by the time you read this), it is easiest to just remember the rule, \ul{always explicitly specify contrasts for predictors in your models} to be safe.
+% 
+% This is necessary, *even though* we have set default contrasts (for unordered factors) to Helmert, in order for model predictions to work for all cases. (Box: technical reason?)
+%% ## necessary to set these explicitly here so that 
+% ## predict(..) works below for any example where
+% ## factor is in random effects (predicting for).
+% ## this is for a dumb technical reason -- so 
+% ## attr(french_cdi_24$lexical_class, 'contrasts')
+% ## is defined
+% ## took me forever to figure this out!  c.f.
+% ## https://github.com/lme4/lme4/issues/414
+% FUTURE: what to say here (this is v technical)
+% If you want to post an issue to lme4 later,
+% the issue is *if* you have contrasts done by
+% default with opts(..) call, so there's a k-level factor x
+% and then you run a model like
+% mod <- glmer(y ~ x + (1+x|participant))
+% then predict() doesn't work for newdata
+% when you have re.form = ~1+x|participant
+
+
+\subsection{A nonlinear effect}
+\label{sec:melr-nonlin}
+
+Figure~\ref{fig:cdi-emp-1} shows the empirical effect of each predictor.   Here we sketch a rationale for the model we'll fit for this data; in reality you would build up the model more rigorously, as in Section~\ref{sec:lmm-model-selection}. 
+
+For fixed effects: the model must include \ttt{sex} and \ttt{lexical\_class}.  There are three continuous predictors.  For each one nonlinearity can be assessed similarly to non-mixed models, using empirical plots and comparing models with different degree nonlinear terms. This would be done with intercepts-only random-effect structure, assuming you are following a fixed-effect-first model selection strategy (our default, as discussed in Section~\ref{sec:lmm-model-selection}). In this case, linear effects of word length and MLU are reasonable from the empirical plot. For word frequency, a nonlinear effect is possible; we choose a spline with $k=2$ as having lowest BIC and best reflecting the empirical trend (Exercise~\ref{ex:melr-nonlin-selection}).  
+
+For random effects, we need at least by-child and by-word random intercepts.  We also add by-child random slopes for \ttt{lexical\_class}, as the predictor of primary interest, by our minimal guidelines for random-effect structure (Section~\ref{sec:ranef-selection-1}). For a `real' model further random slopes should be considered, but we keep this one simpler for feasibility.
+
+% 
+% - There are a couple continuous predictors here. Can assess nonlinearity similarly to non-mixed models: empirical plots; model comparison with diff degree effects. These would be done with *intercepts-only* random effect structure, assuming you are following a fixed-effects-first model selection strategry (the default we'll assume in).
+% 
+% For word frequency a nonlinear effect is possible; we choose a spline with $k=2$ by comparing  random-intercept-only models with different spline orders and choosing the one with lowest BIC (Exercise).
+
+
+<<cdi-emp-1, echo=FALSE, fig.asp=1.15, out.width='95%', fig.width=default_fig.width*.95/default_out.width, fig.cap='Top left: empirical relationship between word frequency and lexical class (one point per word).  Other plots: empirical effect of five predictors on the proportion of words produced, for the \\ttt{french\\_cdi\\_24} dataset. Points are by-child proportions for child-level predictor \\ttt{sex} and by-word proportions for word-level predictors (all other predictors); dots/errorbars are means and bootstrapped 95\\% CIs over points, and lines/shading are LOESS smooths with 95\\% CIs.'>>=
+p1 <- french_cdi_24 %>%
+  filter(!duplicated(definition)) %>%
+  ggplot(aes(x = lexical_class, y = freq.std)) +
+  geom_boxplot() +
+  geom_jitter(size = 0.5, height = 0.1, width = 0.2, alpha = 0.25) +
+  xlab("Lexical class") +
+  ylab("Word frequency\n(standardized)") + 
+  scale_x_discrete("Lexical class", labels = c("function_words" = "func_wds","verbs" = "verbs", "adjectives" = "adjectives","nouns" = "nouns"))
+
+# FUTURE: how do we do correct smooths in these cases?
+## not sure how to compute exact CIs, or do a geom_smooth with gam
+## binomial, given grouped-by-word structure.
+p2 <- french_cdi_24 %>%
+  group_by(definition, lexical_class) %>%
+  summarise(prop = mean(produces)) %>%
+  ggplot(aes(x = lexical_class, y = prop)) +
+  stat_summary(fun.data = mean_cl_boot) + 
+  geom_jitter(size = 0.5, alpha = 0.2, width = 0.2, height = 0) +
+  xlab("Lexical class") +
+  ylab("% children produced") + 
+  scale_x_discrete("Lexical class", labels = c("function_words" = "func_wds","verbs" = "verbs", "adjectives" = "adjectives","nouns" = "nouns"))
+
+
+p3 <- french_cdi_24 %>%
+  group_by(definition, freq.std) %>%
+  summarise(prop = mean(produces), n=n()) %>%
+  ggplot(aes(x = freq.std, y = prop, weight=n)) +
+  geom_smooth(color=default_line_color) +
+  geom_point(size = 0.5, alpha = 0.25) +
+  xlab("Word frequency (standardized)") +
+  ylab("% children produced")
+
+
+# This might be right, for GAM version?  makes each proportion be treated
+# as 54 (n) independent trials
+# french_cdi_24 %>%
+#   group_by(definition, freq.std) %>%
+#   summarise(prop = mean(produces), n=n()) %>%
+#   ggplot(aes(x = freq.std, y = prop, weight=n)) +
+#   geom_smooth(method = "gam", 
+#     method.args = list(family = "binomial"),
+#     formula = y ~ s(x)) +
+#   geom_point(size = 0.5) +
+#   xlab("Word frequency (standardized)") +
+#   ylab("% children produced")
+
+
+p4 <- french_cdi_24 %>%
+  group_by(definition, num_phons) %>%
+  summarise(prop = mean(produces)) %>%
+  ggplot(aes(x = num_phons, y = prop)) +
+  geom_smooth(color=default_line_color) +
+  geom_jitter(size = 0.5, alpha = 0.25, width = 0.01, height = 0) +
+  xlab("Word length (phones)") +
+  ylab("% children produced") +
+  scale_x_log10()
+
+p5 <- french_cdi_24 %>%
+  group_by(definition, MLU) %>%
+  summarise(prop = mean(produces)) %>%
+  ggplot(aes(x = MLU, y = prop)) +
+  geom_smooth(color=default_line_color) +
+  geom_point(size = 0.5, alpha = 0.25) +
+  xlab("MLU (words)") +
+  ylab("% children produced") +
+  scale_x_log10()
+
+
+p6 <- french_cdi_24 %>%
+  group_by(sex, child) %>%
+  summarise(prop = mean(produces)) %>%
+  ggplot(aes(x = sex, y = prop)) +
+  stat_summary(fun.data = mean_cl_boot, color=default_line_color, size=0.75) + 
+  geom_jitter(size = 0.5, alpha = 0.5, width = 0.2, height = 0) +
+  xlab("Child gender") +
+  ylab("% words produced")
+
+(p1 | p2) / (p3 | p4) / (p5 | p6) 
+@
+
+% - First models for this data could be:
+% 
+% <<eval = FALSE>>=
+% cdi_m1 <- glmer(produces ~ lexical_class+sex + freq.std + log_nphones.std + (1|child) + (1|definition), data=french_cdi_24, 
+%                 family='binomial', control=glmerControl(optimizer = "bobyqa"))
+% @
+% 
+% - There are a couple continuous predictors here. Can assess nonlinearity similarly to non-mixed models: empirical plots; model comparison with diff degree effects. These would be done with *intercepts-only* random effect structure, assuming you are following a fixed-effects-first model selection strategry (the default we'll assume later).
+% 
+% 
+% <<eval=FALSE>>=
+% cdi_ns2 <- update(cdi_m1, . ~ . - freq.std + ns(freq.std, 2))
+% cdi_ns3 <- update(cdi_m1, . ~ . - freq.std + ns(freq.std, 3))
+% cdi_ns4 <- update(cdi_m1, . ~ . - freq.std + ns(freq.std, 4))
+% @
+% 
+% and comparing togehter w th linear model (cdi\_m1), you choose $k=2$ by BIC, and this looks reasonable given empirical data.
+% 
+% - Would then need to select random slopes.  The minimum is lexical\_class; we'll just assume this.  (In a full analysis, would need to build up ranef structure, as we discuss in )
+% 
+
+To fit this model:
+
+<<eval=FALSE>>=
+cdi_mod <- glmer(produces ~ lexical_class + sex + ns(freq.std, 2) +
+  log_nphones.std + (1 + lexical_class | child) + (1 | definition),
+data = french_cdi_24, family = "binomial",
+control = glmerControl(optimizer = "bobyqa")
+)
+@
+
+It will take a while to fit this model  ($\sim$15 min to fit on my laptop), and you should try %If you actually fit this model, note that it may take a, %while ($\sim$15--20 min on my laptop),
+%and you should try 
+not to do it more than once (Box~\ref{box:saving-models}).
+
+\begin{boxedtext}{Practical note: Saving/loading models}
+\label{box:saving-models}
+
+Whenever you fit a model in R that takes a long time (minutes-hours)---which is very common once you are fitting realistic mixed models---it is good practice to only fit it once.
+%save the fitted model, then reload it later as needed. 
+%rather than re-computing every time you run your analysis script.   
+The easiest way to do this is to save your fitted model 
+%(or whatever) 
+as an RDS object:
+
+<<eval=FALSE>>=
+## objects/ is where large saved objects for this
+## book go.
+saveRDS(cdi_mod, file = "objects/cdi_m2.rds")
+@
+
+You can then load it next time you need it, which is what we do in the source file for this chapter:
+
+<<>>=
+cdi_mod <- readRDS("objects/cdi_m2.rds")
+@
+
+It is very common to just fit a bunch of models in one script, which are refit every time you re-run the script.  Don't do this!  
+%Even for medium-sized datasets, a reasonable mixed model can take minutes to fit, and this is normal. 
+The time you spend writing code to save and load computed objects will massively pay off.   Researchers sometimes think that something is wrong if a model does not fit instantaneously, but running time is not a good diagnostic. Fitting a GLMM is a complex optimization problem, and a reasonable model can take minutes to fit for even medium dataset size/model complexity. %reasonable mixed-effects model (especially a GLMM) can take minutes to fit, even for a  GLMMs (and LMMseven for medium-size datasets, a reasonable model can take minutes to fit if anything, a (final) model which fits instantaneously  a model which fits instantly may be too simple but remember that even a medium-complexity mixed-effects model is fitting hundreds of parameters.
+
+The same `don't recompute' advice holds for any non-trivial computation.  For example, the parametric bootstrapping calls in Section~\ref{sec:parametric-bootstrapping} and the simulations to create Figure~\ref{fig:sdsm-1} (in Chapter~\ref{chap:inference-1}) take a while, so the source code for these chapters checks if the objects exist, loads them if they do, and only runs the computations if they don't.
+
+\end{boxedtext}
+
+The fitted model is:
+
+<<output.lines=17:37>>=
+summary(cdi_mod)
+@
+
+For example, the \ttt{log\_nphones.std} and \ttt{MLU.std} effects are negative (and significant), as expected.  We interpret other terms below.
+
+Recall that the individual rows of the model table for a nonlinear term are not very interpretable. Figure~\ref{fig:cdi-freq-1} shows the predicted effect of
+%To visualize the predicted effect of 
+word frequency (using \ttt{ggemmeans()}), marginalizing over other predictors. (An example of making predictions from scratch for this model is below.)  
+%we use functionality from \ttt{sjPlot} (Figure~\ref{fig:cdi-freq-1}):
+
+<<cdi-freq-1, echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap='Predicted effect of \\ttt{freq.std} for model \\ttt{cdi\\_mod}, with 95\\% confidence intervals, marginalizing over other predictors.'>>=
+ggemmeans(cdi_mod, type='fe', terms="freq.std [all]") %>% plot() + labs(x="Frequency (standardized)", y="Predicted probability", title="")
+@
+
+The model predicts that the \ttt{freq.std} effect is definitely positive for low-mid frequency words, then becomes less certain, possibly reversing for high-frequency words.   This probably reflects function words, which on average have higher frequency but are less likely to be produced than other lexical classes (Figure~\ref{fig:cdi-emp-1} top-left). There are also fewer high-frequency words generally (by Zipf's law), so there is less data from which to infer the frequency effect.
+
+% 
+% - So the model predicts that the frequency effect is positive, but levels off: for high-enough frequency words, no effect. 
+
+\subsection{Factors, marginal means, post-hoc tests}
+\label{sec:fact-mm-pht}
+
+Most functionality for factors, including different contrast coding schemes, carries over from non-mixed-effects models (Section~\ref{sec:contrast-coding}--\ref{sec:interpreting-interactions}) to {fixed effects} for mixed models.  By default we are coding fixed effects using Helmert contrasts (as in previous chapters: Section~\ref{sec:factors-discussion}), but other schemes are possible.
+
+For example, the \ttt{sex} effect in the model means that male children may be slightly less likely to know an average word than female children, but the effect is not significantly different from 0.   
+
+We can confirm that \ttt{lexical\_class} significantly contributes to the model (`omnibus test') using a likelihood-ratio test:
+
+<<output.lines=5:10>>=
+## fit model without any lexical_class terms
+cdi_mod_noLexClass <- update(cdi_mod, . ~ . - 
+    (1 + lexical_class | child) + (1 | child))
+anova(cdi_mod, cdi_mod_noLexClass)
+@
+
+It would be possible to interpret the individual contrasts for \ttt{lexical\_class} (e.g., \ttt{lexical\_class3}: an average child is more likely to know \tsc{nouns} than words from other lexical classes); instead we turn to the easier option.
+%Instead of interpreting the \ttt{lexical\_class} rows in terms of contrasts (e.g.,\ an average child is more likely to know \tsc{nouns} than words from other lexical classes), ---but this is 
+
+\subsection{Omnibus and post-hoc tests}
+
+Multi-level factors are more easily interpreted by plotting model predictions and comparing marginal means (`post-hoc tests'). The {emmeans} package (Section~\ref{sec:post-hoc-tests}) contains functionality for mixed-effects models as well (see ``Sophisticated models in emmeans'' vignette).\footnote{Note that by default {emmeans} uses fast but less accurate $p$-value estimates---Wald $z$ for GLMMs, $t$-as-$z$ for LMMs unless the dataset is small---so bear in mind the $p$-values are a little low.}
+%taking care of some subtle issues (e.g.,\ $p$-value calculation, CIs vs. PIs) with sensible defaults.  
+
+For example, we can get the `marginal means' for \ttt{lexical\_class}---the predicted log-odds for each level, for an average child, marginalizing over other predictors (plotted in Figure~\ref{fig:cdi-pred-2} (left)):
+
+<<>>=
+emm_cdi_1 <- emmeans(cdi_mod, ~lexical_class)
+emm_cdi_1
+@
+
+%Here, emmeans has marginalized over other predictors as before.  Interpretation is for an average child/word.  
+
+
+We could then do pairwise comparisons:
+
+<<>>=
+contrast(emm_cdi_1, method = "pairwise")
+@
+
+For a logistic regression, it may be useful to get model predictions and do post-hoc tests on the probability scale---that is, as probabilities and odds ratios---rather than log-odds.  This requires doing all calculations in log-odds (model predictions, confidence intervals, etc.), then transforming, which {emmeans} does for you:
+
+<<>>=
+## probability space: type = 'response'
+emm_cdi_2 <- emmeans(cdi_mod, ~lexical_class, type = "response")
+
+## odds ratio, rather than difference in log-odds
+## results shown using tidy() method to clean up output
+contrast(emm_cdi_2, method = "pairwise") %>%
+  tidy() %>%
+  select(-term, -null.value, -df)
+@
+
+Either way, we would conclude that \tsc{function words}, \tsc{verbs} $<$ \tsc{nouns} (and nothing about \tsc{adjectives}).  This is reflected in the model predictions, shown in log-odds and probability in Figure~\ref{fig:cdi-pred-2}.
+%(made using the \ttt{emmip()} function from emmeans, for plotting marginal means).
+%plotting marginal means):
+
+<<cdi-pred-2, echo=FALSE, fig.asp=0.7, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap='Predicted effect of \\ttt{lexical\\_class} for model \\ttt{cdi\\_mod} in log-odds (left) and probability (right), with 95\\% confidence intervals, marginalizing over other predictors. '>>=
+##emmip: function from emmeans for plotting marginal means
+## log-odds
+emmip(cdi_mod, ~lexical_class, CIs = TRUE) + ylab("Pred. log-odds") + xlab("Lexical class")  + 
+    scale_x_discrete("Lexical class", labels = c("function_words" = "func_wds","verbs" = "verbs", "adjectives" = "adjectives","nouns" = "nouns"))
+
+## probability (type='response')
+emmip(cdi_mod, ~lexical_class, type = "response", CIs = TRUE) + ylim(0, 1) + ylab("Pred. probability") + xlab("Lexical class")+ 
+    scale_x_discrete("Lexical class", labels = c("function_words" = "func_wds","verbs" = "verbs", "adjectives" = "adjectives","nouns" = "nouns"))
+@
+
+
+While the predicted probabilities are in the expected order (\tsc{function\_words}, \tsc{verbs}, \tsc{adjectives}, \tsc{nouns}), there is not enough evidence to conclude all levels significantly differ, for an average child.
+
+
+
+%% FUTURE: maybe?
+% - Interesting interpretation, together with freq.std nonlinear effect.  The model has to account for the fact that function words have the highest frequency, but are least likely to be produced.  Decides that FWs are indeed less likely to be produced, after controlling for frequency (etc), but also for very high-frequency words the frequency effect reverses direction. 
+
+% The example above is essentially the `omnibus + post-hoc tests' approach to assessing the effect of \ttt{lexical\_class}. (We haven't shown an omnibus test, but it would be a model comparison of \ttt{cdi\_mod} with the subset model with all \ttt{lexical\_class} terms removed, and it would be significant.)
+
+\subsection{Custom contrasts}
+
+To assess the (fixed) effect of \ttt{lexical\_class}, we could alternatively set the same `custom contrasts' as for the smaller version of this dataset (Section~\ref{sec:custom-post-hoc}), to test targeted hypotheses: whether children show a `noun bias' (\tsc{nouns} $-$ \tsc{adjectives}/\tsc{verbs}) or `function word bias' (\tsc{adjectives}/\tsc{verbs} $-$ \tsc{function\_words}), on average:
+
+<<>>=
+interpVecs <- list(
+  nounBias = c(0, -0.5, -0.5, 1),
+  fwBias = c(-1, 0.5, 0.5, 0),
+  verbVAdj = c(0, -1, 1, 0)
+)
+## verbVAdj is just a third orthogonal contrast
+
+contrast(emm_cdi_1, method = interpVecs)
+@
+
+The post-hoc test using these contrasts suggests that (1) children show noun bias and verb bias in the expected direction, on average; (2) only noun bias is significantly different from 0.
+
+\subsection{By-group effects}
+\label{sec:by-group-effects}
+
+What is new with mixed-effects models is by-group variability in the effect of a factor.  In this example, children vary in the effect of \ttt{lexical\_class}, and we could calculate the model's prediction for each lexical class, for each child.  Let's predict this by hand, for an `average word':
+
+<<>>=
+# set up dataframe
+newdata <- french_cdi_24 %>%
+  tidyr::expand(child, lexical_class) %>%
+  mutate(lexical_class = fct_relevel(
+    lexical_class, "function_words",
+    "verbs", "adjectives", "nouns"
+  )) %>%
+  ## `average word': all word-level preds = 0
+  mutate(log_nphones.std = 0, freq.std = 0, MLU.std = 0)
+
+## get child-level predictors (here, just sex)
+## and merge into the prediction dataframe
+newdata <- french_cdi_24 %>%
+  distinct(child, .keep_all = TRUE) %>%
+  select(child, sex) %>%
+  right_join(newdata)
+contrasts(newdata$lexical_class) <- contr.helmert(4)
+contrasts(newdata$sex) <- contr.helmert(2)
+
+cdi_child_preds <- newdata %>%
+  ## random-effects: by-child only
+  ## no by-word REs = for an `average noun', verb, etc.
+  mutate(pred_logit = predict(cdi_mod,
+    newdata = newdata,
+    re.form = ~ (1 + lexical_class | child)
+  ))
+@
+
+These are plotted in Figure~\ref{fig:cdi-preds-3} (left).  Note that these predictions account for child-level variables (here, just \ttt{sex}), so the predictions really are by-child. (Functions for making model predictions, e.g.,\ from \ttt{ggeffects()} or \ttt{effects()}, don't usually account for group-level predictors; see Box~\ref{box:group-predictions}.)
+%%
+%
+It is visually clear that children vary massively in the {intercept}---meaning how many words they have acquired, total---reflecting the large by-child intercept estimate. They also differ to some extent in the \ttt{lexical\_class} effect (Exercise~\ref{ex:cdi-variability}).
+
+To relate more explicitly to the research question, we can calculate noun-bias and function word-bias values for {each child}, in log-odds:
+
+<<output.lines=1:4>>=
+## make there be one row per child, with `noun',
+## `verb', etc. columns for predicted logit
+cdi_child_preds_2 <- cdi_child_preds %>%
+  pivot_wider(names_from = lexical_class, values_from = pred_logit) %>%
+  ## calculate by-child noun/function word bias
+  mutate(
+    noun_bias = nouns - 0.5 * verbs - 0.5 * adjectives,
+    fw_bias = 0.5 * verbs + 0.5 * adjectives - function_words
+  )
+
+cdi_child_preds_2 %>%
+  select(child, noun_bias, fw_bias)
+@
+
+
+<<cdi-preds-3, echo=FALSE, fig.asp=0.4, out.width='90%', fig.width=default_fig.width*.90/default_out.width,fig.cap='Predicted by-child probabilities of word production as a function of \\ttt{lexical\\_class} (left), and \`noun bias\' and \`function word bias\' values (as odds ratios: right), marginalizing over other predictors. Dotted/solid lines indicate null/population-level effects.'>>=
+p1 <- cdi_child_preds %>% ggplot(aes(x = lexical_class, y = plogis(pred_logit))) +
+  geom_line(aes(group = child), size=0.35) +
+  xlab("Lexical class") +
+  ylab("Pred. probability") +
+  scale_x_discrete("Lexical class", labels = c("function_words" = "func_wds","verbs" = "verbs", "adjectives" = "adjectives","nouns" = "nouns"))
+
+## get population-level N/FW bias estimates:
+cdi_cont <- contrast(emm_cdi_1, method = interpVecs)
+
+nounBiasEff <- cdi_cont %>%
+  tidy() %>%
+  filter(contrast == "nounBias") %>%
+  pull(estimate)
+
+fwBiasEff <- cdi_cont %>%
+  tidy() %>%
+  filter(contrast == "fwBias") %>%
+  pull(estimate)
+
+p2 <- cdi_child_preds_2 %>% ggplot(aes(x = exp(noun_bias), y = exp(fw_bias))) +
+  geom_point() +
+  xlab("Noun bias (odds ratio)") +
+  ylab("Func. word bias\n(odds ratio)") +
+  geom_vline(aes(xintercept = exp(nounBiasEff)), color = default_line_color) +
+  geom_hline(aes(yintercept = exp(fwBiasEff)), color = default_line_color) +
+  geom_vline(aes(xintercept = 1), lty = 2) +
+  geom_hline(aes(yintercept = 1), lty = 2)
+
+p1 + p2 + plot_annotation(title = 'By-child')
+@
+
+These values are plotted in Figure~\ref{fig:cdi-preds-3} (right).    Most children show the expected direction for noun bias (positive $x$-axis values); a majority show the expected function-word bias direction (positive $y$-axis values). What is clear is that children vary greatly in the effect size of their noun and verb biases.
+%(recall that $\Delta$log-odds=2 corresponds to a 7x increase in odds).
+%We would need confidenc eintervals to judge whether any child actually has an (estimated) noun or verb bias in the unexpected direction; these are all probably within errorbars of zero.
+
+
+%Many children have *opposite* direction for one bias or the other, but probably these are all close enough to 0; we'd need CIs to judge.
+
+This reflects a lot of by-child variability in the \ttt{lexical\_class} effect. We can check by model comparison that children do significantly differ:
+
+<<output.lines=5:10>>=
+cdi_mod_noRanSlope <- update(cdi_mod, . ~ . - 
+    (1 + lexical_class | child) + (1 | child))
+anova(cdi_mod, cdi_mod_noRanSlope)
+@
+
+\subsection{Post-hoc trends}
+\label{sec:post-hoc-trends-2}
+
+
+We can also compute post-hoc trends (Section~\ref{sec:post-hoc-trends}) for mixed-effects models to help interpret interactions, such as the modulation of the Williams effect by sentence voice (Figure~\ref{fig:givenness-empirical-2})  To calculate the \ttt{clabel.williams} effect for each value of \ttt{voice.passive}:
+
+<<>>=
+giv_emt <- emtrends(givenness_m1, ~voice.passive, var = "clabel.williams")
+giv_emt
+@
+
+The \ttt{clabel.williams} effect is positive for \tsc{active} and \tsc{passive} sentence voice (corresponding to negative and positive \ttt{voice.passive}), averaging over other predictors---the 95\% confidence intervals don't overlap 0  We can conclude that the Williams effect exists regardless of sentence voice; only its magnitude changes. 
+
+\section{Variable importance}
+\label{sec:melr-varimp}
+
+As for non-mixed-effects models (Section~\ref{sec:variable-importance-complex}), there are different possible ways to quantify `how important are different predictors' for mixed-effects models.  This is very important for interpreting and reporting models with less focus on $p$-values and more on predicted effects/sizes.
+
+\subsection{Coefficient sizes}
+
+For simple cases---where we are only interested in fixed effects, all predictors are standardized, and there are no multi-level factors ($>$2 levels) or interactions---the $|\hat{\beta}|$ values (absolute values of fixed-effect coefficient estimates) can be used, as for non-mixed-effects models.   None of the mixed-effects models we've considered are this simple, so we don't give an example.
+
+% For example, consider the (approximate) confidence intervals of the $\hat{\beta}_i$'s for model \ttt{vot\_mod3} from the last chapter:
+
+% -For simple cases---interested in fixed effect only, all predictors are standardized, no interactions---can use $\hat{beta}$ values (fixed-effect coefficients),same as for non-mixed effects models.  Ex: for givenness\_m1, examine (approximate) confidence intervals:
+% 
+% <<>>=
+% ## takes a couple minutes; 
+% ## use method='Wald' flag for faster/less accurate
+% confint.merMod(vot_mod3, parm = 'beta_')
+% @
+% 
+% These suggest variable importance
+% 
+% $$
+% \ttt{clabel.williams} > \ttt{npType.pronoun} \ge \ttt{voice.passive}.
+% $$
+% 
+% (The $\ge$ sign is because the \ttt{npType} and \ttt{voice} CIs overlap.)
+
+For anything more complex, there are different options to define `variable importance' for mixed-effects models. This is a difficult problem for the {general} case
+%, and an active research area 
+(\citealp[see e.g.,][]{rights2020new}; \citealp[][\S21.4]{gelman2007data}; functionality in the \ttt{merTools} package)---due partially to the ambiguity of `importance' for mixed-effects models,  as we've seen a few times now, and partially to a lack of implementations which work across a wide class of models (e.g.,\ \textbf{G}LMMs; factor or nonlinear effects; random slopes, crossed or uncorrelated random effects).   
+
+We will sketch out some options we know of, and hopefully more functionality will exist by the time you read this.
+
+\subsection{Model comparison}
+\label{sec:melr-model-comparison}
+
+As in Section~\ref{sec:logreg-model-comparison}, the contribution of each predictor could be assessed by comparing the full model with a model where all its terms are dropped---for a mixed-effects model this means dropping fixed effects for the predictor and any interaction terms, and corresponding random slopes.  
+The `significance' of each comparison can be assessed by an appropriate hypothesis test.  For example, for the \ttt{givenness\_m1} model we would do three model comparisons using likelihood-ratio tests (or PB, if we wanted to be more accurate), one for each predictor:
+
+<<>>=
+## original model formula :
+## stressshift ~ clabel.williams + npType.pronoun + voice.passive +
+## (1 + clabel.williams + npType.pronoun || item) +
+## (1 + clabel.williams +  voice.passive + npType.pronoun || participant)
+
+## exclude all fixed and random-effect terms
+## involving clabel.williams
+giv_m1_noClabel <- update(givenness_m1, . ~ npType.pronoun + voice.passive + 
+    (1 + npType.pronoun || item) + 
+    (1 + voice.passive + npType.pronoun || participant))
+
+## same for voice.passive
+giv_m1_noVoice <- update(givenness_m1, . ~ clabel.williams + 
+    npType.pronoun + (1 + clabel.williams + npType.pronoun || item) + 
+    (1 + clabel.williams + npType.pronoun || participant))
+
+## same for npType.pronoun
+giv_m1_noNpType <- update(givenness_m1, . ~ 
+    clabel.williams * voice.passive +
+    (1 + clabel.williams || item) + 
+    (1 + clabel.williams * voice.passive || participant))
+@
+
+<<>>=
+## p-values for the LR test of each model
+## vs. the full model
+anova(givenness_m1, giv_m1_noClabel)$`Pr(>Chisq)`[2]
+anova(givenness_m1, giv_m1_noVoice)$`Pr(>Chisq)`[2]
+anova(givenness_m1, giv_m1_noNpType)$`Pr(>Chisq)`[2]
+@
+
+
+The $p$-values of the three tests measure the significance of each variable's contributions, and give the order of predictor importance:
+$$
+\ttt{clabel.williams} > \ttt{voice.passive} > \ttt{npType.pronoun}
+$$
+
+Alternatively, an appropriate {effect size} can be calculated for each model comparison, as a change in the value of any model quality metric which can be interpreted as an effect size (e.g.,\ $R^2_m$, $R^2_c$; for logistic regression, AUC, accuracy).  For example, the changes in (conditional) AUC for each model comparison above are:
+
+<<>>=
+auc(givenness_m1) - auc(giv_m1_noClabel)
+auc(givenness_m1) - auc(giv_m1_noNpType)
+auc(givenness_m1) - auc(giv_m1_noVoice)
+@
+
+By this $\Delta$AUC metric, the order of predictor importance is:
+$$
+\ttt{clabel.williams} > \ttt{npType.pronoun} \ge \ttt{voice.passive}
+$$
+
+(The $\ge$ sign is because the AUCs are almost equal.)  This is similar to the conclusion we'd reach from the average marginal effects for predictors in this model (shown in Section~\ref{sec:giv-m1-fixef}).
+
+\paragraph{Partial $R^2$}
+
+A closely-related notion is defining `partial' measures, which attempt to decompose e.g.,\ $R^2_m$ or $R^2_c$ for the full model into the amount attributable to each predictor. Such standardized effect sizes 
+%($\Delta$ or `partial' measures) 
+are tricky to define and interpret
+%---there are complex issues with defining and interpreting them 
+(see e.g.,\  \citealp{partR2,rights2020new};  \citealp[][`Variable importance']{glmmfaq} for partial $\Delta R^2$).  Nonetheless, they seem useful as rough measures.
+
+For $R^2$ measures, one could just calculate each variable's importance as $\Delta R^2$ between the full and subset models, using \ttt{r.squaredGLMM()}.  The {partR2} package \citep{partR2} does this properly, to give marginal or conditional $\Delta R^2$, with confidence intervals possible. Unfortunately this package doesn't currently accept models with random slopes, so we do an example using the \ttt{diatones\_melr} model. 
+
+We would like $R^2$ corresponding to dropping four sets of coefficients---\ttt{frequency} + interactions, etc.---which we specify using the \ttt{partbatch} argument.  
+
+%% FUTURE: if we keep this example,  put furrr at beginning of chapter?
+<<eval=FALSE>>=
+## set up parallel processing as required by partR2
+library(furrr)
+plan(multisession, workers = 8)
+batches <- list(
+  c("syll1_coda", "frequency:syll1_coda"),
+  c("syll2_coda"), c("syll2_td", "syll2_td:frequency"),
+  c("frequency", "syll2_td:frequency", "frequency:syll1_coda")
+)
+res <- partR2(diatones_melr, partbatch = batches, nboot = 15, 
+  parallel = TRUE)
+
+## marginal R2
+res$R2[1:5, ]
+
+res2 <- partR2(diatones_melr, R2_type = "conditional", 
+  partbatch = batches, nboot = 15, parallel = TRUE)
+
+## conditional R2
+res2$R2[1:5, ]
+@
+
+
+<<partR2-comp, echo=30:33>>=
+library(parallel)
+nc <- detectCores()
+fName1 <- "partR2_res1.rds"
+fName2 <- "partR2_res2.rds"
+
+fPath1 <- paste("objects/", fName1, sep = "")
+fPath2 <- paste("objects/", fName2, sep = "")
+
+do_comp <- !(file.exists(fPath1) & file.exists(fPath2))
+
+if (do_comp) {
+  ## set up parallel processing as required by partR2
+library(furrr)
+plan(multisession, workers = nc)
+batches <- list(
+  c("syll1_coda", "frequency:syll1_coda"),
+  c("syll2_coda"), c("syll2_td", "syll2_td:frequency"),
+  c("frequency", "syll2_td:frequency", "frequency:syll1_coda")
+)
+res <- partR2(diatones_melr, partbatch = batches, nboot = 15, parallel = TRUE)
+res2 <- partR2(diatones_melr, R2_type = "conditional", partbatch = batches, nboot = 15, parallel = TRUE)
+
+  saveRDS(res, file = fPath1)
+  saveRDS(res2, file = fPath2)
+} else {
+  res <- readRDS(fPath1)
+  res2 <- readRDS(fPath2)
+}
+## marginal R2
+res$R2[1:5, ]
+## conditional R2
+res2$R2[1:5, ]
+@
+
+% Not as interesting here for the \ttt{givnness\_m1} example, since we expect it to just give the same info as $\hat{\beta}$ values.  Do for \ttt{diatones} model, where there are interactions:
+% 
+% <<>>=
+% ## max_level = 3: assess all combinations of 3 fixed eff predictors, needed to assess frequency + 2 ixns
+% ## partvars: specifies every fixed-effect coefficient
+% partR2(diatones_melr, partvars=names(fixef(diatones_melr))[2:7], max_level=3)
+% @
+
+The importance of \ttt{syll1\_coda} is $\Delta R^2_m = 0.146$, corresponding to the row for \ttt{syll1\_coda+frequency:syll1\_coda}, and so on.   Using either marginal or conditional $R^2$, the order of predictor importance is:
+%(using marginal $R^2$) is:
+$$
+\ttt{frequency} > \ttt{syll1\_coda} > \ttt{syll2\_td} > \ttt{syll2\_coda}
+$$
+
+(However, the overlapping confidence intervals suggest that we shouldn't put too much stock in this ordering.)
+
+This is a similar order to what we found for the non-mixed-effects model (Section~\ref{sec:logreg-model-comparison}) using an analogous method (odds ratio, which would be similar to calculating $\Delta$ accuracy), except that \ttt{frequency} is now the most important predictor instead of \ttt{syll1\_coda}.  It makes sense that adding the by-\ttt{prefix} random intercept to this model (which gives \ttt{diatones\_melr}) decreases the importance of \ttt{syll1\_coda}, since this predictor is \ttt{prefix}-level.
+
+\subsection{Other options}
+
+\label{sec:average-marginal-effects}
+
+Other approaches use the fitted model to quantify a predictor $x$'s importance in terms of how much changing $x$ affects  model predictions.  These methods are particularly useful when working with a model that takes a while to fit---such as \ttt{cdi\_mod}, which takes 15+ minutes---because they don't require refitting subset models.  
+
+
+\emph{Average marginal effects}, introduced in Section~\ref{sec:average-marginal-effects}, can be calculated for mixed-effects models using the {margins} package.  The AME is %\citep{margins}. \citep{leeper2018interpreting}. 
+%This is  
+how much a small change in $x$ affects the model's prediction, averaging across the dataset.\footnote{Note that this means what `average' in AMEs mean is different from usual for mixed-effects models: average (change in predictions) across all participants/items, not ``for an average participant/item''. The latter could be obtained using non-default settings for {margins}.}  
+%A closely-related approach is the `average predictive difference' of \citet[][\S21.4]{gelman2007data},  which is explained in enough depth to write your own code,
+%than \citet{leeper2018interpreting} for mixed-effects models, 
+%but has (apparently) not been implemented in a stable R package.
+%(to my knowledge).
+
+
+% Another approach is based on how much a change in the predictor actually affects the response, with other predictors held constant---the `marginal effect' (Box~\ref{box:marginal-effects}).
+
+% 
+% Other options:
+% 
+% - Some notion of how much changing a predictor affects the model's predictions.  
+
+% - Can calculate an *average marginal effect*, as in Section~\ref{sec:average-marginal-effects}, using `margins' from `margins', as for non-mixed-effects models, but what AMEs mean in this case is a bit different (these are not ``for an average participant/item'') -- see the \ttt{margins} documentation.   
+
+At present the function (\ttt{margins()} from package margins) we previously used for AMEs doesn't work for models with nonlinear terms.
+%(e.g., \ttt{cdi\_mod}) 
+%due to a bug, so we can't just run \ttt{margins(cdi\_mod)}. 
+Instead we use this example to demonstrate functionality from a closely-related package, marginaleffects, which 
+%(among other things) 
+calculates AMEs similarly to margins, and outputs them in tidy format.
+
+<<output.lines=1:8>>=
+## Get marginal effects for each predictor, for each observation
+marginaleffects(cdi_mod) %>% 
+  ## summarize for each predictor to give AMEs
+  tidy() %>% 
+  ## show just estimate and 95% CIs
+  select(term, estimate, conf.low, conf.high)
+@
+
+% FUTURE: change other margins commands to marginaleffects, which is
+% actually maintained?
+
+
+Each AME is in probability space, e.g., a male child has about 0.04 lower probability of knowing a word than a female child.  We can use the absolute values of the AMEs as a measure of variable importance, taking the largest value for \ttt{lexical\_class} (0.28) as its importance---this corresponds to an increase of probability by 0.28 between \tsc{function words} and \tsc{nouns}.\footnote{By default, for factors \ttt{marginaleffects()} (or \ttt{margins()}, in the margins package) calculates an AME for the difference between each level and the base level, i.e., treatment coding.  I think the largest AME can be thought of as a `range' measure of the factor's effect size, provided your base level is intuitively the smallest (here: \tsc{function\_words}).}
+%(NB: I made this up.)}
+%% FUTURE: more rigorous.. just say trying to approximate `range' sometimes used as effect size for categorical predictors.
+By this metric, the variable importances are:
+$$
+\ttt{lexical\_class} > \text{frequency} > \text{word length} > \text{MLU} > \ttt{sex}
+$$
+
+This could be important for the research question: a word's lexical class not only has a significant effect on when it is learned, after accounting for other word-level properties---its effect size is also larger than those of the other word-level properties. 
+
+% This could be important for the original research question: lexical class not only has a significant effect, after accounting for other word-level properties, its effect is \textbf{larger} than theirs.  In addition, note that the effect size of child sex is as large as e.g.,\ frequency, even though it is less significant ($p=0.04$ vs $p<0.0001$). This may reflect the existnce of a real effect of child sex, whose exact value the model is uncertain of given the huge amount of by-child variability (as seen in Figure\ ).
+
+%% FUTURE: add in a Box for stuff below -- the general idea of simulation from the fitted model as a method for predicting *anything* + CIs?  Or no?
+%% 
+%% also -- `predictive simulation' idea below.
+%% basically, *simulation for understanding the fitted model*
+%% maybe in next chapter?
+%%
+%% Some refs are: GH 12.8, merTools vignette.
+%%
+%% But really to do this, it's much easier to just
+%% fit your MEM in a Bayesian framework, 
+%% and do predictions
+%% from posterior; this is bread-and-butter of working
+%% with Bayesian models (e.g., BRMS).
+%%
+%% Maybe the minimum for this box is ``simulating from the fitted model''?
+%%
+% - AMEs don't deal well with some cases (factors), and doesn't generalize to fixed and random effects; for example for the CDI data, etc. (couldn't sy e.g., how much noun bias differs across kids, in probability) Also doesn't apply when the quantity of interest for our RQs isn't a model coefficeint; it's something else that can be computed from them.  For example, for the CDI data, noun bias (in probability) vs. FW word bias, across kids.   A more general approach is to use simulation from the fitted model to examine any quantity of interest (including marginal effects, or...)---`predictive simulation'.  Beyond scope of this book, but discussion by GH-REF/others; excellent functionality in \ttt{merTools} for this (``An Introduction to merTools'' vignette). Probably more by the time you read this.
+
+
+
+
+%% WENT DOWN RABBIT HOLE on effect size;
+%% my conclusion is there is no easy solution for now
+%% `margins' doesn't work for nonlinear effects
+%%
+%% partial R2 in partR2: doesn't work for 
+%% fixef predictors which are in random slopes.
+%% otherwise, it was promising!
+%% GLMM FAQ has bit recommending away from 
+%% standardized effect sizes for GLMMs
+%%
+%% Anova(..) can give you a rough sense..
+%%
+%%
+%% standardized coefficients
+
+
+% - Effect size: can again look at standardized coefficeints, or look at chi-squared, or marginal effects.
+% 
+% - Issues w/ nonlinear effects, or multi-level factors.
+% 
+% - An interesting alternative approach is to calculate *partial $R^2$* : something like, how much R2 changes when a (set of) predictors excluded.  There are caveats, given how fraught defining R2 was, but an interesting option.
+% 
+% - Implementation in r2part (cite preprint): can calculate partial R2 for marginal or conditional; get CIs.
+% 
+% 
+% <<eval=FALSE>>=
+% cdi_m2_partR2 <- partR2(cdi_m2, partvars = c('lexical_class', 'sex', 'log_nphones.std', 'ns(freq.std,2)'), max_level=4, nboot=NULL)
+% @
+% 
+% - Get that lexical class much more important, then frequency, sex, num phones.
+
+\section{Reporting a mixed-effects logistic regression}
+
+Reporting a mixed-effects logistic regression mostly follows the same principles as for reporting LMMs (Section~\ref{sec:reporting-lmms}).
+%and reporting logistic regressions (Section~\ref{sec:log-reg-reporting}).
+Part of your report, as for an LMM, should generally be 1+ quantitative summaries of the model (Section~\ref{sec:melr-model-summaries}).  Remember that whether classification-based (AUC, accuracy, etc.) or likelihood-based (AIC, $R^2$, etc.), these summaries are uninterpretable in isolation for an MELR model, so they should somehow be contextualized (e.g.,\ reporting the same summaries for a baseline model). 
+% already said earlier
+%This is different from LMMs, where e.g.,\ $R^2_m$ has a straightforward interpretation (`percentage of variance explained by the fixed effects').
+
+
+% 
+% 
+% - Similar principles to LMMs.  
+% 
+% - For model summary/goodness of fit (check out some recent good papers?): should prob. report 1 or more, for full model *and baseline*, given uninterpretability in isolation.
+% 
+% - Is this section necessary? I think just follows from log reg + LMM.
+% 
+% - Can just say:  follows from log reg + LMM, except for the model summary/goodness of fit: if give marginal/conditional R2, should also give for a baseline model since they aren't meaningful in isolation.
+% 
+
+\section{Other readings}
+\label{sec:other-reading-ch9}
+
+Many of the resources discussed for LMMs (Section~\ref{sec:other-reading-ch8}) cover GLMMs as well, typically in less detail.    For MELR in particular, \citet[][chap. 14]{gelman2007data} and \citet[][chap.\ 17]{snijders2011multilevel} are good general references.  Tutorials and books on mixed-effects models for ecologists \citep{bolker2009generalized,bolker2015linear,zuur2009extensions} useful for focusing on the GLMM case.  
+%There are no comprehensive tutorials for MELRs or GLMMs for psychologists or language scientists, analogous to \citet{meteyard2020best} or \citet{brauer2018linear}.
+Shorter introductions to MELR or GLMMs for language scientists in particular, focusing on different subfields, include \citet{jaeger08}, \citet[][\S7.4]{johnson2008quantitative}, \citet[][chap.~12]{levshina2015linguistics},  \citet{th2015most}, and \citet{johnson2009getting}.    \citet{kimball2019confronting} discusses separation and quasi-separation for MELRs.
+
+
+
+
+
+
+
+\section{Exercises}
+
+\exer{\label{ex:diatones-ranef} To test whether the random-effect term is justified in a model containing a \textbf{single} random effect, like \ttt{diatones\_melr}, we cannot just compare the models with and without the term (e.g.,\ using an LR test or AIC), as their likelihoods are not comparable. It would be ideal to use an Exact LR test, as we did for LMMs for this case, but a stable R implementation does not exist for GLMMs.  Instead, calculate a 95\% confidence interval for the by-prefix random intercept variance for this model, using a decent method (profile likelihood or parametric bootstrap), and check if it includes zero.  What does the confidence interval suggest in this case?}
+
+\exer{\label{ex:r2-cdi} Calculate marginal and conditional $R^2$ for three models of the French CDI data: (1) the full model (\ttt{cdi\_mod}), (2) that model without the by-child random slope of \ttt{lexical\_class}, and (3) the baseline model, containing just by-child and by-word random intercepts (no fixed effects).  What conclusions can you reach about `variance explained' by comparing the $R^2$ values for (1)--(3)?}
+
+\exer{\label{ex:cdi-resids} Fitted-binned-residual plots can be useful for MELR models of sufficiently large datasets, where it is possible to derive confidence  intervals.  Use  \ttt{binned\_residuals()} from performance (or \ttt{binned.residuals()} from arm) to make a plot for model \ttt{cdi\_mod}. If the model is correct, $\sim$95\% of the (binned) residuals should fall inside the confidence intervals.}
+
+\subexer{What are the residuals here? (Hint: they are not deviance residuals).  This relates to why the confidence interval is circle-shaped.}
+
+\subexer{Does the plot suggest any (big) problem with the model? If so, can you figure out which observations should be investigated further?}
+
+
+
+\exer{\label{ex:giv-inf} Verify this statement about model \ttt{givenness\_m1}, from Section~\ref{sec:giv-inf-example}:  ``It turns out that other influential items and participants have the same effect [larger effect size, similar or larger $z$] on the model.''}
+
+
+\exer{Examine the full output of the \ttt{compareCoefs} call from Section~\ref{sec:giv-inf-example}.  You should find that excluding item 16 affects the conclusion we would draw about the \ttt{clabel.williams:voice.passive} effect. Overall, what can we conclude about the robustness of the `Williams effect', including whether it varies depending on sentence structure?}
+
+\exer{Check for influential {observations} (= words) for the \ttt{diatones\_melr} model. You should find there are some words which greatly affect the model---in what way(s)?  Does this change what qualitative conclusions can be drawn from the model?}
+
+\exer{\label{ex:melr-nonlin-selection}  
+Determine what nonlinear effect of \ttt{freq.std} to use in the French CDI model (Section~\ref{sec:melr-nonlin}).
+}
+
+\subexer{Fit several candidate models of the \ttt{french\_cdi\_24} data, with different \ttt{freq.std} effects: linear, natural splines with $k=2$, $k=3$, and $k=4$. The model structure should be as described in Section~\ref{sec:melr-nonlin}: fixed-effect terms for \ttt{lexical\_class}, etc., and by-child and by-word random intercepts (no random slopes).}
+
+\subexer{Compare the models using AIC and BIC.  Which model would you select, using each criterion?  Call these $k_{AIC}$ and $k_{BIC}$.}
+
+\subexer{Decide which $k$ makes most sense, by plotting the predicted \ttt{freq.std} effects for the models with $k_{AIC}$ and $k_{BIC}$, comparing the model tables, and/or comparing to the empirical \ttt{freq.std} effect (in Figure~\ref{fig:cdi-emp-1}). In the text we assume $k=2$, but you don't need to reach the same conclusion.}
+
+\exer{\label{ex:cdi-variability} For \ttt{cdi\_mod}: quantify how much the model predicts that children vary in the intercept---a proxy for their overall vocabulary size---in an interpretable way, that refers to probabilities or odds ratios (i.e., not ``95\% of children have log-odds between X and Y''), from the by-child random intercept variance.    For example, you could determine the model-predicted intercept value for each child, transformed to probability.}
+
+\subexer{It is visually clear from Figure~\ref{fig:cdi-preds-3} that children vary in the \ttt{lexical\_class} effect as well.  What model parameters, that you see in \ttt{summary(cdi\_mod)},  capture this variation---and why is it not straightforward to read off from these an interpretable summary of ``how much do children vary?''}
+
+\subexer{Figure out such an interpretable summary---this could involve numbers and/or visualization.}
+
+
+% 
+% - diatones\_melr model: look into influential *observations* -- single words.  (can show: there are some words which greatly affect the model; excluding them tends to strengthen effects except frequency main effect.)

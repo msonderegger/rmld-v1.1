@@ -1,0 +1,2482 @@
+% !Rnw root = master.Rnw
+
+
+<<cache=FALSE, echo=FALSE>>=
+## use num signif digits (which is what
+## tidy print does by default) instead of decimal 
+options(knitr.digits.signif = TRUE)
+options(digits = 2)
+@
+
+
+
+\chapter[Statistical inference I: Samples, estimates, and hypothesis tests]{Samples, estimates, and hypothesis tests}
+\label{chap:inference-1}
+ 
+%\chaptermark{Inference and hypothesis testing}
+ 
+
+This chapter and the next cover basics of \emph{inferential statistics}: going from a finite sample of data from a population
+%(a sample from a probability distribution), 
+to inferences about the population,
+%(the probability distribution), 
+with the goal of ``[drawing] conclusions about which parameter values are supported by the data and which are not'' \citep[][4]{hoenig2001abuse}. 
+
+Regression modeling is a type of inferential statistics which builds on concepts covered in these two chapters. We first cover estimation of population values and differences using sample statistics (Section~\ref{sec:point-estimation}), uncertainty in these estimates (Section~\ref{sec:interval-estimation}), and assessing the reliability of conclusions we reach about population values/differences  (Sections~\ref{sec:ht-1}--\ref{sec:reporting-hypothesis-tests}) using \emph{hypothesis testing}.  The next chapter covers the size of estimates, and different kinds of errors we can make in assessing the size and reliability of an effect.
+%and their consequences.
+
+%Chapter 2: Basics of statistical inference which underly regression models (presented here): point estimates, standard error, interval estimates, hypothesis testing.
+
+We assume you already have some exposure to the topics in the current chapter, %topics already, 
+which are covered in depth in many sources; some are listed in Section~\ref{sec:other-reading-ch2}. However, these topics are covered in very different ways in different settings (e.g.,\ in a statistics class vs. an R tutorial),
+%`psych stats' class, an R tutorial, or a mathematical statistics course),
+%and in practice we have found that 
+For language scientists learning regression modeling, it is useful to establish a common set of concepts, 
+%basic results,
+terminology, and practical guidelines,
+%---
+using linguistic data examples.  This is the goal of this chapter.
+%The other is to give 
+
+
+% we also assume you have seen concepts in the current chapter before, hence our informal and brief presentation. The goal is to get us on the same page in terms of assumptions, terminology, and basic results, using linguistic data examples.
+
+\section{Preliminaries}
+\label{sec:prelim-2}
+
+\subsection{Packages}
+
+We assume that you have loaded the tidyverse and languageR libraries (Section~\ref{sec:r-toolset}).
+
+<<ch2_libraries, echo=1:2, cache=FALSE>>=
+library(languageR)
+library(tidyverse)
+library(feather) # this line not shown
+
+select <- dplyr::select
+@
+
+\ttt{library(tidyverse)} is a shortcut to load a set of `tidyverse' packages  (Section~\ref{sec:r-toolset}).\footnote{As of late 2021: ggplot2, dplyr, tidyr, readr, purrr, tibble, stringr, forcats.}
+%the packages are \ttt{ggplot2}, \ttt{dplyr}, \ttt{tidyr}, \ttt{readr}, \ttt{purrr}, \ttt{tibble}, \ttt{stringr}, and \ttt{forcats}.  
+%If you have trouble installing \ttt{tidyverse}, or its definition changes in the future, 
+You can alternatively just install and load single packages as needed.  For this book, the dplyr, ggplot2, and tidyr packages are most important \citep{dplyr,ggplot2,tidyr}.
+% 
+% \begin{boxedtext}{Boxed text}
+% 
+% This book consists of main text and two kinds of boxes, inspired by McElreath's \emph{Statistical Rethinking}.  Boxed text is not essential for understanding the main text, and \textbf{can be skipped}---especially on a first reading.  Boxes give extra information of two types.  `Broader context' boxes provide more in-depth explanations of technical concepts or math, connections to other approaches, discuss common misunderstandings, and so on, and references for further reading if you're interested.  `Practical note' boxes discuss statistical reporting, math refreshers, rules of thumb, and so on---aspects of quantitative analysis you're unlikely to delve into until you actually use these methods in your own work.
+% 
+% Offsetting materials in boxes is intended to make the book easier to use, now and later. On a first read you can focus just on the essentials by skipping boxes, and when actually analyzing your own data later or  learning more about a particular method, the boxes call out relevant material.
+% 
+% \end{boxedtext}
+
+\subsection{Data}
+\label{sec:transitions-dataset}
+
+\subsubsection*{The \ttt{transitions} dataset}
+
+We also assume that you have loaded the \ttt{transitions} dataset:
+
+<<ch2_datasets, echo=1:2>>=
+## change path for your computer 
+transitions <- read.csv("data/transitions_rmld.csv")
+@
+
+This dataset (described in more detail in Appendix~\ref{sec:transitionsdata}), comes from a study by \citet{roberts2015effects} examining approximately 20,000 transitions between conversational turns in a corpus of telephone calls.  Each conversation (column \ttt{file}) is between two different speakers. Of interest is what factors affect transition durations (column \ttt{dur}): how long after one speaker finishes speaking before the other speaker begins.  
+The `before' and `after' speakers for each turn are called Speaker A and Speaker B (columns \ttt{spkA}, \ttt{spkB}). 
+For example, in conversation \tsc{sw3154.eaf} (the first rows of the dataframe), the two speakers are \tsc{spkr1290} and \tsc{spkr1288}, and which one is Speaker A or B alternates:
+
+<<output.lines=1:5>>=
+# Show the first few rows of transitions for some columns:
+select(transitions, file, spkA, spkB, sexA, sexB, dur)
+@
+
+(Here, \texttt{...} indicates omitted lines of R output. You can always run the code yourself to see full output.)
+
+
+%---how long after Speaker A finishes speaking before Speaker B begins---and analyzes what factors affect transition durations (column \ttt{dur}).
+
+Observations from the same conversation are not independent---since individual speakers probably have characteristic durations---but independent observations are assumed by methods introduced in this chapter.
+% (and in all chapters until we introduce mixed-effects models). 
+Thus, we take a small subset of the data where observations are plausibly independent, by choosing a random observation from each conversation:
+
+<<>>=
+# Makes random sample replicable
+set.seed(201)
+
+# Randomize rows of dataframe, take first row for each conversation
+random_rows <- sample(1:nrow(transitions)) 
+transitions_sub <- transitions[random_rows, ] %>%
+  filter(!duplicated(file))
+@
+
+We assume that you have run these commands, so the dataframe \ttt{transitions\_sub} exists ($n = \Sexpr{nrow(transitions_sub)}$), and you are using the same `random' dataframe.
+
+%This chapter gives brief context for each dataset when it is used.  
+
+% These topics are thus covered in many good introductory sources.
+
+ % we also assume you have seen concepts in the current chapter before, hence our informal and brief presentation. The goal is to get us on the same page in terms of assumptions, terminology, and basic results, using linguistic data examples.
+
+
+% This dataset is 
+% Detailed descriptions of the datasets and the research questions they were collected to address are given in Sections~\ref{tapdata} and \ref{transitionsdata}. 
+% 
+% This book assumes you know some basic probability theory and methods for data summary and visualization, as detailed in \secref{sec:prerequisites} (which includes  resources to brush up on these topics). 
+
+%  : we also assume you have seen concepts in the current chapter before, hence our informal and brief presentation. The goal is to get us on the same page in terms of assumptions, terminology, and basic results, using linguistic data examples.
+
+% We take a relatively informal approach in this chapter to statistical concepts and formal results that are needed later in the book. See REFS for background.
+
+
+\subsection{Notational conventions}
+
+In this chapter we start referring to individual datasets and R objects.
+%Our notation will hopefully be intuitive, but is detailed here just in case. 
+R libraries (e.g.,\ tidyverse, ggplot) are kept in plain text, while
+datasets are referred to in \ttt{teletype}, such as the \ttt{transitions} dataset. Teletype is used for
+%refer to R libraries (e.g.,\ \ttt{tidyverse}), functions (e.g., \ttt{ggplot}), and
+objects in R code, such as the \ttt{transitions\_sub} dataframe,
+%generated by loading in the \ttt{transitions} dataset (also called \ttt{transitions}), 
+or individual columns of the dataframe. A fundamental data type in R is the \emph{factor}, a categorical variable which takes on discrete values. Factors  (typically columns of a dataframe) 
+are written using teletype and individual levels with \tsc{small caps}. For example, the factor \ttt{sexB} in the \ttt{transitions} dataset has levels \tsc{f} and \tsc{m}. 
+
+
+
+
+\hypertarget{sample-population}{%
+\section{Point estimation}\label{sec:point-estimation}}
+
+% The \ttt{transitions} data (Section~\ref{transitionsdata}) comes from a study examining approximately 20,000 transitions between conversational turns in a corpus of telephone calls---how long after Speaker A finishes speaking Speaker B begins---and analyzes what factors affect transition durations (column \ttt{dur}). 
+
+ %(Because they are single values, these estimates are called \emph{point estimates}.)
+In a quantitative study we are often interested in estimating single numbers (called \emph{point estimates} in statistics) which characterize an aspect of the world. For example, in the \ttt{transitions} data, 
+%The \ttt{transitions} data comes from a study analyzing what factors affect transition durations.  For example, 
+we may be interested in the effect of Speaker B's gender (column \ttt{sexB}: values \tsc{f}, \tsc{m}).\footnote{We assume that this variable reflects the speaker's gender presentation rather than biological sex, but use the column name provided in the dataset.} This could be quantified by three numbers:
+\begin{itemize}
+
+\item How long are transitions if Speaker B is male? 
+
+\item How long are transitions if Speaker B is female?
+
+\item What is the effect of gender on transition duration (the difference between male and female durations)?
+
+\end{itemize}
+
+\subsection{Population and sample}
+\label{sec:population-sample}
+
+In quantitative studies we are typically interested in \emph{population} values of a parameter---their `true' values in the world, under the model of the world we are assuming (Box~\ref{box:frequentist-bayesian}).
+Typically population values refer to a context beyond just the setting for the study---we are probably interested in gender effects on transition time among all speakers of American English, not just ``all American English speakers who 
+%could have 
+volunteered to be recorded for this corpus.''  However, in the real world we never observe population values; we can only take a \emph{sample} of size $n$ and make an inference about the population values.
+
+For example, to estimate the three quantities above using the \ttt{transitions\_sub} data ($n$=\Sexpr{nrow(transitions_sub)}), we could use:
+<<echo=FALSE>>=
+## for some reason data.frame() needed to make numbers print correct
+## number of sig figs in the text.
+tab1 <- transitions_sub %>% group_by(sexB) %>% 
+  summarise(meanDur = mean(dur)) %>% data.frame()
+
+temp1 <- tab1[1,'meanDur']
+temp2 <- tab1[2,'meanDur']
+temp3 <- temp1-temp2
+@
+
+
+\begin{itemize}
+\item The average value of \ttt{dur} when \texttt{sexB} is \tsc{f} or \tsc{m}
+(\Sexpr{temp1} msec, \Sexpr{temp2} msec)
+
+\item The difference between these averages (\Sexpr{temp3} msec)
+\end{itemize}
+
+These values can be calculated for the \texttt{transitions\_sub} data using functions from dplyr:
+
+<<results=FALSE, highlight=FALSE>>=
+transitions_sub %>%
+  group_by(sexB) %>%
+  summarise(mean(dur))
+@
+
+These estimates are not the same as the population values, for several reasons: the sample may (a) not be representative of the desired population (e.g., all American English speakers), or (b) truly random, and (c) the sample is finite. While (a) and (b) are important, they form part of the general issue of how the data were obtained, which we are abstracting away from in this book (Section~\ref{sec:term-and-assumptions}, Box~\ref{box:world-assumptions}). We thus assume
+%(Box~\ref{box:sample-caveats}),
+%We we abstract away from them here and assume 
+we do have a random sample from the population of interest. This leaves (c), which is a fundamental issue addressed by statistical inference:
+%\emph{point estimation} methods: 
+estimation of (population) quantities of interest, whose true values we will never actually know, based on a finite sample.
+
+\begin{boxedtext}{Broader context: Frequentist and Bayesian statistics}
+\label{box:frequentist-bayesian}
+
+
+There are two major approaches to statistical inference, corresponding to different philosophies of what `probability' means.  The assumption that `true' values of parameters exist implies we are doing \emph{frequentist} statistics rather than \emph{Bayesian} statistics, where inference results in a probability distribution describing degrees of belief over possible values of the parameter.  %The two methods rest on very different philosophies of what `probability' means, but in practice methods in principle implies quite a different 
+This is simply a pragmatic choice---frequentist methods are vastly more common in behavioral and social sciences, though Bayesian methods offer some serious advantages and are making inroads. 
+%for analyzing linguistic data in particular.  
+Many sources describe the general differences between Bayesian and frequentist approaches  (\citealp[e.g.,][chap.~4]{dienes2008understanding}; \citealp[][chap.~1]{mcelreath2015statistical}), and
+\citet{nicenboim2016statistical,vasishth2018bayesian} are good starting points for Bayesian methods for analyzing linguistic data in particular.  
+%while the general differences between bayesian and frequentist approaches to probability and inference are described in many  \citet[][9.2]{NavarroOnline} are (shorter/longer) while the differences between bayesian and freuqentist approaches to probability and inference are 
+\end{boxedtext}
+
+\subsection{Sampling distribution of the sample mean}
+\label{sec:sdsm}
+
+%\subsection{Sample statistics and their distributions}
+
+In inferential statistics, the general setup is: We have a data sample from a quantitative study, which we assume is representative and random.  We use this sample to calculate \emph{sample statistics}, which are estimates of the  \emph{population values} of quantities we care about---typically parameters of a statistical model.
+
+Ideally a sample statistic should be an \emph{unbiased estimator} of the population value:
+%(e.g., \citealp[][Ch.\ 7]{rice2006mathematical}):
+the statistic's average value should be the same as the population value, meaning that if we kept repeating the study and computing the statistic, averaging these values would get us closer and closer to the true value.  
+% 
+% \subsection{Sampling distribution of the sample mean}
+% \label{sdsm}
+
+The most basic sample statistic is the \emph{sample mean}, which is the average of $n$ observations (written $x_i, \ldots, x_n$):
+\begin{equation}
+  \hat{\mu} = \frac{\sum^n_{i=1} x_i}{n}
+  \label{eq:sample-mean}
+\end{equation}
+
+The sample mean approximates the population mean, which we write $\mu$.  To understand how the sample mean is related to the population mean, we can explore using simulations where we know the population distribution.
+
+Suppose that durations of transitions (\ttt{dur}) to female speakers in the \ttt{transitions} data were in fact drawn from a normal distribution, with mean $\mu=200$ and standard deviation $\sigma = 450$, which we write  $N(200, 450)$ (see Section~\ref{sec:global-notation} on notation). These are the (made-up) population values.  
+
+We are interested in the \emph{sampling distribution} of the sample mean: How likely are we to calculate different values for $\mu$ if we kept drawing random samples? We can plot a good approximation of this distribution as follows:
+\begin{enumerate}
+
+\item Draw a sample of $n$ observations from the distribution $N(200, 450)$.
+
+\item Calculate $\hat{\mu}$ for the sample.
+
+\item Repeat steps 1--2 many times ($n_{sim}$), and plot a histogram showing the distribution of $\hat{\mu}$ values.
+
+\end{enumerate}
+
+%% paragraph cut (Michaela advice)
+% For large $n_{sim}$, this histogram is a very good approximation  The same method can be used to approximate any probability distribution where we know how the data is generated; this is the procedure used in this book whenever we say something is approximated ``by simulation.''
+
+<<sdsm-1, echo = FALSE, fig.cap="Sampling distribution of the sample mean (histograms), calculated over $n$ observations drawn from a normal distribution with $\\mu = 200$ and standard deviation $\\sigma$, for varying $n$ and $\\sigma$. Dotted line shows probability distribution of observations ($N(200, \\sigma)$).">>=
+fName = 'sdsm-1_df.feather'
+fPath = paste('objects/', fName, sep='')
+doSim <- !file.exists(fPath)
+
+
+n_sim <- 100000
+n_samp_vals <- c(5, 10, 50)
+sigma_vals <- c(450, 250)
+
+if(doSim){
+  ## 100000 times for each n value:
+  sample_mean_df_1 <- expand.grid(iter=1:n_sim, n = n_samp_vals, sigma=sigma_vals) %>% 
+    as_tibble() %>% 
+    ## n draws from N(200, sigma) and take mean
+    mutate(sampleMean = map2_dbl(n, sigma, ~mean(rnorm(mean=200, s=.y, n=.x))))
+  
+  write_feather(sample_mean_df_1, path=fPath)
+} else{
+  sample_mean_df_1 <- read_feather(path=fPath)
+}
+
+prob_df_1 <- sample_mean_df_1 %>% 
+  tidyr::expand(
+    sampleMean = seq(min(sampleMean), max(sampleMean), by=10),
+    sigma=sigma_vals, 
+    n = n_samp_vals
+  ) %>% 
+  mutate(d=dnorm(sampleMean, mean=200, s=sigma))
+
+
+sample_mean_df_1 %>% 
+  ggplot(aes(x=sampleMean)) +
+  geom_histogram(aes(y=stat(density), binwidth=10)) + 
+  geom_line(aes(y=d), lty=2, data=prob_df_1) + 
+  facet_grid(sigma~n, labeller = label_both)  +
+  xlim(-400, 800) +
+  xlab("Sample mean") 
+# hi
+## somehow can use density (see ?geom_histogram)
+
+## FUTURE: Greek sigma in the plot
+@
+
+
+% 
+% \begin{figure}
+% 
+% {\centering
+% 
+% }
+% 
+% % <<echo=FALSE,  out.width="45%",>>=
+% % central.limit(15)
+% % central.limit(50)
+% % @
+% \caption{Sampling distribution of the sample mean, calculated over $n$ observations drawn from a normal distribution with $\mu = 200$ and standard deviation $\sigma$, for varying $n$ and $\sigma$.}\label{fig:sdsm-1}
+% \end{figure}
+
+Figure~\ref{fig:sdsm-1} (top row) shows these histograms when the sample mean is calculated over 5, 10, and 50 observations (with $n_{sim} = 100000$).  The distribution of the sample mean gets narrower for larger $n$. Thus, how certain we should be about our observed sample mean (\Sexpr{tab1[1,'meanDur']} msec) depends a lot on sample size: if $n=5$, we would be likely to calculate a sample mean that is at least this far (\Sexpr{200-round(tab1[1,'meanDur'])} msec) from the true value, just by chance.
+
+The distribution of the sample mean is also narrower if the quantity that we are estimating is less variable (that is, smaller $\sigma$), as illustrated in the bottom row of Figure~\ref{fig:sdsm-1}   Thus, the more observations in the sample or the less variable the quantity we are estimating, the more precise (= less variability) is the mean value that we calculate based on the sample.
+
+As suggested by the shape of the distributions in Figure~\ref{fig:sdsm-1}, the sample mean is itself normally distributed (Box~\ref{sec:normal-facts}).  The mean of this distribution is $\mu$---because the sample mean is an unbiased estimator of the population mean---and its standard deviation is $\sigma/\sqrt{n}$. This can written more succinctly as:
+\begin{equation}
+\hat{\mu} \sim N(\mu, \frac{\sigma}{\sqrt{n}}),
+\label{eq:sample-mean-dist}
+\end{equation}
+using notation for describing the distribution of a random variable (Section~\ref{sec:global-notation}).  The $\sigma/\sqrt{n}$ term quantifies the observation from Figure~\ref{fig:sdsm-1}: either higher sample size or lower variability (in the data we're analyzing) lead to a more precise estimate.
+
+
+\begin{boxedtext}{Practical note: Normal distributions refresher}
+\label{sec:normal-facts}
+
+%Since normal distributions are ubiquitous,
+It is useful to know some properties and notation for normal distributions which come up frequently in regression modeling (and in R output).  The probability density for a normal distribution is
+\begin{equation*}
+P(x | \mu, \sigma) = \frac{1}{\sqrt{2 \pi \sigma^2}} \exp{-\frac{(x - \mu)^2}{2 \sigma^2}}
+\end{equation*}
+This is often abbreviated as just a $N(\mu, \sigma)$ distribution. (Or as $N(\mu, \sigma^2)$ depending on the author.)  $\sigma^2$ is the \emph{variance}, and the inverse-variance ($1/\sigma^2$) is the \emph{precision}.
+%usually written $\tau$.  
+
+A normal distribution with mean 0 and standard deviation 1 is called a \emph{standard normal distribution}, written $N(0,1)$.  It is common (in statistics texts, or in R output) to use $z$ (or $Z$) to refer to any random variable which is expected to follow a standard normal distribution.  If you draw an observation $z$ from such a random variable, the probability that $|z|<1$, $|z|<2$ or $|z|<3$  is 0.68, 0.954, and 0.997 (respectively).
+% 
+% \begin{itemize}
+% \item The probability that $|z|<1$ is 0.68 
+% \item The probability that \(|z| < 2\) is 0.954
+% \item The probability that  \(|z| < 3\) is 0.997
+% \end{itemize}
+%These facts are sometimes called the ``68–95–99.7 rule'': 
+That is, about 2/3 of probability lies within one $\sigma$ from the mean, about 95\% lies within two $\sigma$, and almost all probability lies within three $\sigma$. 
+Given the ubiquity of the 95\% significance criterion in language sciences, it is also useful to remember that {exactly} 95\% of probability lies within 1.96 $\sigma$ from the mean.  But in general 2 is ``close enough'' to 1.96 to represent ``95\% probability''.
+
+A very useful property of normal distributions is closure under linear combination:
+%.\footnote{Recall that linear combination of variables means ``multiplying each variable by any (real) number, then adding together''. So if $x$ and $y$ are variables, then $2x$, $x - 5y$, $0.5x + \pi y$ are all linear combinations of $x$ and $y$.}
+%In particular: 
+\begin{itemize}
+\item If $Z \sim N(\mu, \sigma)$ and $a$ and $b$ are constants, then:
+\begin{equation*}
+aZ + b \sim N(a \mu + b, \sqrt{a} \sigma)
+\end{equation*}
+That is, adding a constant increases the mean, and multiplying by a constant multiplies the variance (which is now $a \sigma^2$).
+\item If $Z_1 \sim N(\mu_1, \sigma_1)$ and $Z_2 \sim N(\mu_2, \sigma_2)$ and $Z_1$ and $Z_2$ are independent,
+\begin{equation*}
+Z_1 + Z_2 \sim N(\mu_1 + \mu_2, \sqrt{\sigma_1^2 + \sigma_2^2})
+\end{equation*}
+That is, the  mean and variance of the sum are just the sums of the individual means and variances.
+\end{itemize}
+One application is normality of the sample mean of $n$ normally-distributed (and independent) observations.  This follows from the last two equations, because the sample mean is just a sum of normally-distributed random variables divided by a constant.
+\end{boxedtext}
+
+
+\subsection{Non-normal distributions and the central limit theorem}
+\label{sec:nnd-regularity-data}
+
+
+% Something to note here is that \textbf{error scales as the square root of the sample size}: the SE has a \(\sqrt{n}\) in the denominator. This relationship will come up over and over in this course, and is the reason why collecting more data has diminishing returns. (Four times as much data is needed to halve the error, and so on.)
+
+Much of regression modeling boils down to estimating mean values, as
+%and quantifying uncertainty in the estimates, 
+we did above for estimating the mean of a normal distribution (as well as quantifying uncertainty in the estimates, as we'll  do below).  But in general, we'll want to analyze data beyond just continuous variables drawn from a normal distribution---much linguistic data is discrete (e.g.,\ yes/no responses in an experiment, syntactic construction A vs. B observed in a corpus), and much continuous-valued linguistic data isn't normally distributed (e.g.,\ word frequencies, phonetic parameters such as voice onset time, reaction times).   What happens if we take the sample mean for observations from a non-normal distribution?
+
+For example, consider the Dutch verb regularity data (dataframe \texttt{regularity}) from the languageR package, described in more detail on its help page (type \ttt{?regularity}).
+%%
+%% Section~\ref{sec:dregdata}. 
+This dataset, originally from
+%the study reported by 
+\citet{baayen05semantic},
+lists 700 Dutch  irregular and regular verbs (column \texttt{Regularity}), and includes lexical and distributional variables which may help predict whether a verb is regular or not, including the verb's frequency (column \texttt{WrittenFrequency}) and which auxiliary verb is used to form certain past
+%/passive 
+tenses (column \ttt{Auxiliary}: levels \tsc{hebben}, \tsc{zijn}, \tsc{zijnheb}).
+In this sample, \Sexpr{xtabs(~Regularity, data=languageR::regularity)[['irregular']]} verbs (\Sexpr{100*xtabs(~Regularity, data=languageR::regularity)[['irregular']]/nrow(languageR::regularity)}\%) are irregular.
+
+Suppose we are trying to estimate a single (population) probability, $p$: how often Dutch verbs are irregular. (If we picked a random verb in a large Dutch dictionary, how likely would we be to select an irregular one?)  We observe $n$ Dutch verbs,
+%(types), 
+$x_1, \dots, x_n$, each of which  is 0 (regular) or 1 (irregular),
+%\footnote{For the purposes of this example, we assume that ``Dutch verbs'' is a very large population, and that regular verbs} 
+
+%how often tapping occurs  (across all kinds of sentences) for North American English speakers; we write its  population value as $p$.  
+%We observe $n$ sentences, $x_1, \dots, x_n$, each of which  is 0 (/t/ is not tapped) or %1 (/t/ is tapped).
+Our estimate for $p$ is the \emph{sample proportion}:
+\begin{equation}
+\hat{p} = \frac{\sum_{i=1}^{n}x_i}{n},
+\label{eq:sample-proportion}
+\end{equation}
+which is the proportion of verbs which were irregular.   Equation \eqref{eq:sample-proportion} looks the same as equation \eqref{eq:sample-mean}, because they are both sample means, but each $x_i$ in equation \eqref{eq:sample-proportion} follows a Bernoulli distribution rather than a normal distribution.
+%(Figure~\ref{fig:sdsm-2}: dotted line).
+The numerator of equation \eqref{eq:sample-proportion} is thus a count, which follows a binomial distribution, not a normal distribution. 
+
+To examine the probability distribution of the sample proportion, we can use the same simulation procedure as above. Figure~\ref{fig:sdsm-2} shows the distribution for different sample sizes, assuming that $p=0.1$ or 0.4 (made-up values), with a dotted line showing $p$.
+
+%including the verb's frequency (column \texttt{WrittenFrequency}) and which \texttt{Auxiliary} is used to form certain past/passive tenses.
+ 
+% For example, consider the \ttt{tapping} dataset (Section~\ref{tapdata}), which contains data from a laboratory experiment  where North American English speakers produce sentences containing a /t/ followed by a vowel (like in "ea\underline{t} early"), and of interest is how often they pronounce the /t/ as a "tap" ([\textipa{R}], as in  N.\ American `atom' ).  Of primary interest was whether the presence of a syntactic boundary following the /t/ (column \ttt{syntax}), as in intransitive sentences like (1) but not in transitive sentences like (2), affects whether speakers use a tap or not (column \ttt{tapped}:\emph{0} or \emph{1}):
+% 
+% \begin{enumerate}
+% \item \ttt{syntax} = \tsc{intransitive}: "If you'd like to ea\underline{t}, early lunch is served."
+% \item \ttt{syntax} = \tsc{transitive}: "If you'd like to ea\underline{t} early, lunch is served."
+% \end{enumerate}
+
+
+
+
+
+<<sdsm-2, echo = FALSE, fig.cap="Sampling distribution of the sample proportion ($\\hat{p}$) for $n$ observations of a Bernoulli random variable with probability $p$ (histogram), varying $n$ and $p$. Dotted line shows the value of $p$.">>=
+fName = 'sdsm-2_df.feather'
+fPath = paste('objects/', fName, sep='')
+doSim <- !file.exists(fPath)
+
+n_sim <- 100000
+n_samp_vals <- c(5, 10, 50)
+sigma_vals <- c(450, 250)
+p_vals <- c(0.1, 0.4)
+
+if(doSim){
+  ## 10000 times for each n value:
+  sample_mean_df_2 <- expand.grid(iter=1:n_sim, n = n_samp_vals, p=p_vals) %>% 
+    as_tibble() %>% 
+    ## n draws from N(200, sigma) and take mean
+    mutate(proportion = map2_dbl(n, p,  ~ mean(rbinom(n=.x, size=1, prob = .y))))
+  
+  write_feather(sample_mean_df_2, path=fPath)
+} else{
+  sample_mean_df_2 <- read_feather(path=fPath)
+}
+prob_df_2 <- expand.grid(n = n_samp_vals, p=p_vals)
+
+sample_mean_df_2 %>% 
+  ggplot(aes(x=proportion, y=stat(density))) +
+  geom_histogram(aes(y=..count../100000), bins=50)  + 
+  geom_vline(aes(xintercept=p), lty=2, data=prob_df_2) +
+  facet_grid(p~n, labeller = label_both) + 
+  xlab("Sample proportion") + ylab("Density") + 
+  scale_x_continuous(labels=c('0', '0.25', '0.5', '0.75', '1'), breaks=c(0,0.25,0.5,0.75, 1), limits=c(0,1))  
+# hi
+@
+
+The distribution of the sample proportion looks somewhat normal for $n=10$, and by $n=50$ looks perfectly normal---even though the  
+%The distribution of the sample mean ($\hat{p}$) looks normal for large enough sample size, even though the 
+distribution of the actual random variable whose mean is being estimated is not normal (it only takes on values 0 or 1).  This illustrates one of the most important results of probability theory, the \emph{central limit theorem}: for a large enough sample from \textbf{any} random variable with mean $\mu$ and standard deviation $\sigma$, the sampling distribution of the sample mean is approximately normally distributed with mean $\mu$ and standard deviation of $\sigma/\sqrt{n}$ (equation~\ref{eq:sample-mean-dist}).\footnote{
+%There are actually many central limit theorems; 
+%\footnote
+We are assuming a fairly weak version of the central limit theorem, where observations are independent and identically distributed. See \citet[][\S5.3]{rice2006mathematical}.}
+
+The central limit theorem essentially says that the larger a sample you collect, the closer to normally-distributed the sample mean is.  This remarkable result is frequently used in inferential statistics, because it allows us to apply the same tools (for dealing with normally distributed data) to many different kinds of data.  Nonetheless, as the example just above shows, it is important to bear in mind that any `normal approximation' is still an approximation, which depends on sample size and the exact distribution being approximated.
+
+% paragrpah removed 11/18 -- michaela advice
+% Figure~\ref{fig:sdsm-2} shows how the normal approximation gets better for larger sample size or when $p$ is further from 0 or 1---in the sense that the sampling distribution looks more like a bell curve.  In addition, the distribution of the  sample mean gets narrower (thus, there is less uncertainty in our estimate of $p$), for larger sample size or when $p$ is \underline{closer} to 0 or 1
+%  (compare top and bottom rows of Figure~\ref{fig:sdsm-2}).  This can be understood as less variability in $x_i$ (Box~\ref{box:bernoulli-se}). Thus, just like for normal $x_i$, the larger the sample size or the less variable the quantity we are estimating, the more precise our estimate of the mean.
+
+\begin{boxedtext}{Broader context: Variability in Bernoulli and binomial distributions}
+\label{box:bernoulli-se}
+
+When estimating the sample mean of a normally-distributed quantity we can vary $n$ and $\sigma$, but for the sample proportion (Figure~\ref{fig:sdsm-2}) there is no $\sigma$ This is because for a Bernoulli random variable (e.g.,\ a coin flip) the only free parameter is the probability of a success ($p$). The distribution still has a standard deviation $\sigma$, it is just a function of the free parameter $p$:
+\begin{equation*}
+\sigma_{\text{Bernoulli}} = \sqrt{p (1-p)}
+\end{equation*}
+
+This quantity is maximized when $p=0.5$, and approaches 0 as $p$ gets closer to 0 or 1.  The (population) standard error of the sample proportion is just $\sigma_{\text{Bernoulli}}/\sqrt{n}$, which decreases either for higher $n$ or $p$ further from 0.5---the pattern seen in Figure~\ref{fig:sdsm-2}.  Intuitively, the further $p$ is from 0.5, the more certain you can be about the outcome of an individual observation. (If $p=1$ or 0, there is no uncertainty.)
+
+% Similarly, a binomial random variable (e.g.,\ how many times a flipped coin comes up heads) does not have a free parameter for the variance: the free parameters are $p$ and $n$, the number of observations.  Its standard deviation is
+% $$
+% \sigma_{binomial} = \sqrt{n p (1-p)}
+% $$
+% (A bernoulli distribution is just a binomial distribution with $n=1$.)
+
+The fact that Bernoulli distributions don't have an independent variance parameter will be important for understanding logistic regressions 
+%and various issues that come up with them in practice 
+(Chapter~\ref{chap:cda-logistic-regression}).
+\end{boxedtext}
+
+
+\section{Uncertainty and interval estimation}
+\label{sec:interval-estimation}
+
+Almost as important as estimating the value of a quantity is estimating the uncertainty in our estimate, 
+%confident we should be in our estimate---
+measured
+%uncertainty 
+either by a single number or by a range of values (called an \emph{interval estimate}).
+
+\subsection{Standard error}
+\label{sec:standard-error}
+
+For our estimate of the sample mean, we saw that the width of the distribution in Figure~\ref{fig:sdsm-1},  $\sigma/\sqrt{n}$, quantifies how much uncertainty there is in our estimate of the sample mean. 
+%which could serve To quantify how confident we should be in our estimate of the sample mean, we would like to calculate  $\sigma/\sqrt{n}$---the width of the distribution in Figure~\ref{fig:sdsm-1}. 
+But in general we do not know $\sigma$ (the population value), and must estimate it. An unbiased estimator for $\sigma$ is:
+\begin{equation}
+  \hat{\sigma} = \sqrt{\frac{\sum^n_{i=1} (x_i - \hat{\mu})^2}{n - 1}},
+  \label{eq:sd-estimate}
+\end{equation}
+which looks almost identical to the formula for calculating a standard deviation of a sample, except with $n-1$ in the denominator instead of $n$ (which corrects for finite sample size: \citealp[][\S7.3]{rice2006mathematical}).
+%\footnote{$s$ is often used to denote the sample standard deviation. We use $\hat{\sigma}$ for consistency with the sample mean ($\hat{\mu}$).}
+
+We can then define the \emph{standard error} of the sample mean, which is an unbiased estimator of $\sigma/\sqrt{n}$:
+\begin{equation}
+SE = \frac{\hat{\sigma}}{\sqrt{n}}
+\label{eq:standard-error}
+\end{equation}
+The standard error estimates how much error there is, on average (across many samples), in our estimate of the population mean $\mu$ using $\hat{\mu}$. 
+% removed, michaela suggestion - 11/19
+%That is, either higher sample size or lower (estimated) variability suggest that our estimate is more precise. (This is different from our estimate \underline{actually} being more precise, because $s$ is itself an estimate.)
+%%see Box~\ref{box:everything-estimated}.)
+
+%%Equation~\ref{eq:standard-error} quantifies the observation from Figure~\ref{fig:sdsm-1}: either higher sample size or lower variability (in the data we're analyzing) lead to a more precise estimate.
+
+
+One consequence of the central limit theorem is that (for large enough $n$) we can use  $\hat{\sigma}/\sqrt{n}$ as an approximate standard error when estimating any sample mean (equation~\ref{eq:standard-error}), just replacing $\hat{\sigma}$ by an estimate of the standard deviation.  Intuitively: whatever we're trying to estimate, our estimate will be more precise for larger sample size or lower variability.
+
+For example, when estimating a proportion, an unbiased estimator for $\sigma$ is
+\begin{equation*}
+\hat{\sigma}_{\hat{p}} = \sqrt{\frac{\hat{p}(1-\hat{p})}{n-1}},
+\end{equation*}
+
+and the standard error is:
+\begin{equation*}
+SE_{\hat{p}} = \frac{\hat{\sigma}_{\hat{p}}}{\sqrt{n}}
+\end{equation*}
+
+
+
+\begin{boxedtext}{Practical note: Standard error and sample size}
+\label{box:se-sample-size}
+Technically, we should call $\frac{\sigma}{\sqrt{n}}$ the `standard error' and $\frac{\hat{\sigma}}{\sqrt{n}}$ the `estimated standard error' \citep[][\S7.3]{rice2006mathematical}. Since we almost always are referring to the latter in this book, we just use  `standard error' to mean `estimated standard error' except where there is ambiguity.
+
+Something useful to remember is that \textbf{error scales as the square root of sample size} (because the  standard error
+%$\sigma/\sqrt{n}$ 
+%Equation~\ref{eq:standard-error}
+has a $\sqrt{n}$ in the denominator).   This is the reason why collecting more data has diminishing returns: doubling sample size only decreases error by a factor of 1.41, and to halve error you need four times as much data!  Note that the (estimated) standard error won't be exactly halved if you collect four times the data, because this number ($\hat{\sigma}/\sqrt{n}$), is itself an estimate, and $s$ will change for a new sample.  Nonetheless, the true standard error will be halved.  (See Exercise~\ref{ex:standard-error}.)
+
+
+
+This basic relationship (error $\sim$  $\sqrt{n}$) holds for many kinds of errors, and is useful in practical settings, such as planning a new study (how much more data should you collect to observe a hypothesized effect?) or critically assessing empirical patterns in published work (how much should you trust the means of cells A and B if cell B contains half as much data?).
+% (if some cells in an experimen) 
+\end{boxedtext}
+
+
+
+
+\subsection{Confidence intervals}\label{sec:confidence-intervals}
+
+
+%Standard errors are easy to calculate, but 
+In isolation a standard error is not an intuitive measure of uncertainty, because it does not give a sense of which values are `likely'.
+%we would like a sense of which values are likely. 
+%we would like an interval of values which are somehow "likely".  
+%it needs to be used to contruct an interval around the sample mean.  
+One commonly-used notion  is a \emph{confidence interval}: a range of values which is $X$\% likely to contain the population value. Most often, $X$=95\%. 
+
+\subsubsection{$Z$-based confidence intervals}
+
+Consider the simplest case, where the sample mean is normally distributed.
+Since the difference between the sample mean and the population value lies between $[-1.96 \cdot \text{standard error}, 1.96 \cdot \text{standard error}]$ with 95\% probability (Box~\ref{sec:normal-facts}), this interval contains $\mu$ with 95\% probability:
+\begin{equation*}
+[\hat{\mu} -  1.96 \cdot \frac{\sigma}{\sqrt{n}}, \hat{\mu} + 1.96 \cdot \frac{\sigma}{\sqrt{n}}]
+\end{equation*}
+We we can define it as the 95\% confidence interval. 
+
+This formula assumes that $\sigma$ is known, but this isn't usually the case, so the interval is  approximated by substituting in our (estimated) standard error (equation~\ref{eq:standard-error}):
+\begin{equation}
+[\hat{\mu} -  1.96 \cdot \frac{\hat{\sigma}}{\sqrt{n}}, \hat{\mu} + 1.96 \cdot \frac{\hat{\sigma}}{\sqrt{n}}]
+\label{eq:approx-conf-int}
+\end{equation}
+
+This second interval should be called an `approximate 95\% confidence interval', but is often reported in publications as just `the 95\% confidence interval'
+%especially in plots of empirical data. 
+(sometimes rounding up to 2 instead of 1.96).  This interval
+approximates a true confidence interval for large enough $n$ (by the central limit theorem), even when the data are not normally distributed.  
+
+%
+% Suppose the sample mean is normally distributed.  Then for population values within 1.96 standard errors of the mean, this sample mean would   then population values of the sample mean within 1.96 standard the confidence interval would be closely related to standard error, and  we would expect 95\% of the distribution to lie within 1.96 standard errors of the mean.  The 95\% confidence interval would then be:
+
+% This motivates using 1.96$\cdot$SE, or just 2$\cdot$SE (rounded up), as a measure of uncertainty. 
+
+% In practice this interval (or using 2is often  used in plots of empirical data as error bars; it is often referred to as an \emph{approximate 95\% confidence interval}. This interval
+% %This interval is sometimes (imprecisely) referred to in published work as the ``95\% confidence interval'', because it 
+% approximates the true confidence interval for large enough $n$ (by the Central Limit Theorem).
+
+\subsubsection{Bootstrapped confidence intervals}
+
+Another way to approximate a confidence interval for an estimate of a quantity $T$  uses \emph{bootstrapping} \citep{efron1994introduction}: use the sample we have to simulate many (fake) new random samples (say $n_{sim}>10000$), each one drawn by sampling with replacement from the original sample (meaning we can draw the same original observation multiple times). For each new sample, we recalculate $T$.
+%Assuming that the observations in the sample were drawn independently, each new sample can be reasonably thought of as a new random sample.
+%and examine how much the quantity you're calculating (the sample mean, say) fluctuates across these re-samples.  
+The resulting set of values $T_1, \ldots, T_{n_{sim}}$ can be used to construct a  \emph{bootstrapped confidence interval} in different ways, the most intuitive of which is just to take the 2.5\% and 97.5\% quantiles of the distribution of the $T_i$ as the lower and upper bounds.\footnote{This `percentile bootstrap' method has problems, and typically more complex methods are used to construct an estimate \citep[][chap.\ 2]{good2006resampling}.}
+%(the `percentile bootstrap').
+
+\begin{boxedtext}{Practical note: Bootstrapping}
+\label{box:bootstrapping}
+
+Bootstrap methods are powerful tools for regression modeling---they can be used to calculate not just confidence intervals, but almost any measure of accuracy, uncertainty, or reliability (e.g.,\ $p$-values), all with minimal assumptions about the data  (beyond independence of observations).  The major tradeoff is computation time, but if you can wait long enough, a bootstrap estimate is often the gold standard.  On contemporary computers, bootstrapping is fast enough to be the default option for many simple cases, such as   confidence intervals for estimated means (discussed in the text),
+%or $p$-values for contingency tables (Section~\ref{sec:chisq-ex}), 
+but too slow for everyday use for more complex cases, such as $p$-values for mixed-effects models (Section~\ref{sec:log-reg-pb}).
+
+%On a 2019 laptop, computing bootstrapped confidence intervals for a comparison of means is fast, but doing so for estimates from a mixed-effects model fit to an average-sized dataset (say $n=1000$) can take hours.
+
+
+% Bootstrapped confidence intervals have the significant advantage of not assuming that observations follow any particular distribution (e.g.,\ normal), and the significant disadvantage of being computationally intensive (because $T$ has to be recalculated many times).  It is fast to compute sufficiently simple bootstrapped confidence intervals on modern computers, computing bootstrapped confidence intervals is fast enough to be a default option, so they are widely used as a default option.
+
+Although the basic technique of resampling with replacement is intuitive, exactly how the bootstrap sample is used to compute such measures can be subtle and generally is not relevant for interpreting the results.  Thus, for most researchers it is best to just use existing R implementations of bootstrap methods (in packages such as boot: \citealp{boot}), and read their documentation for more details if needed.  
+%We will follow this advice when introducing bootstrap methods at several points in this book without much discussion.  
+To learn more about bootstrapping methods, \citet{good2006resampling} is a readable
+%less-technical
+introduction,
+%,good2013permutation}
+%and \citep{good2013permutation}
+%are less and more technical introductions, 
+general statistics books (e.g.,~\citealp[][\S3.5]{baguley2012serious}; \citealp[][54--57]{kline2013beyond}) contain short introductions,
+%to the general ideas, 
+and many online resources cover bootstrapping methods in R. 
+\end{boxedtext}
+
+% 
+% \begin{boxedtext}{When ``just google it'' is good advice}
+% In some places in this text, as in Box~\ref{box:bootstrapping}, part of the advice I give for further reading is ``online resources''---in other words, ``just google it''. This seems very lazy on my part, so I would like to say a bit about why and when I give this advice.  FUTURE
+% 
+% (This could be moved to previous chapter...)
+% \end{boxedtext}
+
+\subsubsection{Interpretation of confidence intervals}
+
+Confidence intervals are less intuitive than they seem \citep{hoekstra2014robust,cumming2014new}. A common (and natural) misconception is that the confidence interval means ``we can be 95\% sure that the population value lies in this interval.''  What it really means is, ``if we collect many samples, about 95\% of the time the confidence interval we calculate would contain the true (population) value''---which is unintuitive, because we typically only have one sample.  The unintuitive meaning arises because the confidence interval is itself a sample estimate (of an interval), which changes with every sample.
+%---the ``dance of the confidence intervals'' \citep{cumming2012understanding,cumming2014new}.  
+For large enough $n$, the two interpretations give similar intervals, but in general we must bear in mind that we could simply have drawn an (un)lucky sample---the population value may not lie in our 95\% confidence interval at all.  This point holds whether confidence intervals are computed using a parametric method (e.g.,\ $z$-based) or a bootstrap method.   
+
+To discuss confidence intervals in an intuitive yet correct way,  \citet[][41]{kline2013beyond} suggests the phrasing: ``The interval [96.28, 103.72] estimates $\mu$, with 95\% confidence.''
+%% this wording splits the difference between literal frequentist interpretation of CI and Bayesian inrepretation (which is intuitive but false)
+
+
+
+% 
+% \begin{boxedtext}{Broader context: bootstrapping}
+% 
+% To compute a measure of uncertainty 
+% \begin{enumerate}
+% \item Randomly draw a sample of size $n$ from the original sample, with replacement (meaning you can draw the same original observation multiple times)
+% \item Compute the quantity of interest  using the new sample, to get estimate $T_i$
+% \item Repeat steps 1--2 many times ($i = 1, \ldots, n_{sim}$)
+% \end{enumerate}
+% 
+% Measures of uncertainty can then be computed based on a histogram of the $T_i$, which approximates the sample distribution of $T$. More intuitively: use the sample you have to simulate many (fake) new samples, and examine how much the quantity you're calculating (the sample mean, say) fluctuates across these re-samples. 
+% 
+% The boostrap sample can be used to construct a  \emph{bootstrapped confidence interval} in different ways, the most intuitive of which is just to take the 2.5\% and 97.5\% quantiles of the distribution of the $T_i$ as the lower and upper bounds (the ``percentile bootstrap'').
+
+
+
+%\footnote{For example, the \ttt{ggplot2} package uses boostrapped confidence intervals by default (via the \ttt{stat\_summary} command). The underlying implementation (\ttt{smean.cl.boot}, from the \ttt{Hmisc} package) uses the percentile bootstrap.}
+
+
+
+% \begin{boxedtext}{Broader context: everything is estimated}
+% \label{box:everything-estimated}
+% 
+% More generally, it's important to remember that all measures of uncertainty or reliability we calculate, such as the standard error ($s/\sqrt{n}$), ``95\% error bars'', or a $p$-value from an NHST hypothesis test, or bootstrapped confidence intervals, are themselves estimates.  These values would change if we drew a new sample---and our current sample could have been "lucky" or "unlucky".  (XX why matters, link to next chapter. see comments here.)  In published work, and in this book, the convention is to just call estimates of a quantity of interest (such as a sample mean, or proportion) "estimates"/"estimated", while for measures of uncertainty or reliability "estimates"/"estimated" is omitted.
+% 
+% %A subtle point is that the standard error $s/\sqrt{n}$, which quantifies uncertainty in our estimate of the mean, is itself an estimate.  This means that everything we compute based on standard errors---including error bars or $p$-values (below)---would change if we drew a new sample, and should be thought of as one possible sample, rather than objective truth. Exercise~\ref{ex:standard-error} gives one example. (FUTURE redo this box, and adapt that exercise?  The point trying to make is just, SE errorbars etc. are often thought of as more real in some sense than estimates, but they are also just properties of the sample. for example this makes retrospective power calculation useless.)
+% 
+% \end{boxedtext}
+
+
+% This point is fundamental for interpreting the results of regression models generally, and will come up again.
+
+
+% Possible Box FUTURE:
+
+% - This interval is sometimes (imprecisely) referred to in published work as ``95\% confdience intervals'', because it approximates the true confidence intervals for large enough $n$ (by the Central Limit Theorem), and calculating true confidence intervals can be computationally intensive.
+
+% - In published work you will often see ``mean \(\pm\) 2 standard errors'', or ``mean \(\pm\) 2\(\sigma\)'' used as ``errorbars'' or ``95\% confidence intervals''; this is just because \(1.96 \approx 2\).
+% 
+% 
+% 
+% An important additional measure of uncertainty in the sample mean, related to the standard error, is a \emph{confidence interval}: the range of values   Since the sample mean is normally distributed with mean
+% \(\mu\) and standard deviation of \(\frac{\sigma}{\sqrt{n}}\) (the standard error of the sample mean, or \emph{SE}).
+% 
+% In addition, 95\% of the area in a normal distribution lies within 1.96 standard deviations of its mean:
+% 
+% \begin{figure}
+% {\centering
+% <<fig.height=4, fig.width=4>>=
+% q_min <- -4
+% q_max <- 4
+% 
+% colorArea <- function(from, to, density, ..., col = col, dens=NULL){
+%   # adapted from https://stackoverflow.com/questions/27898931/how-to-shade-a-graph-using-curve-in-r
+%   y_seq <- seq(from, to, length.out = 500)
+%   d <- c(0, density(y_seq, ...), 0)
+%   polygon(c(from, y_seq, to), d, col = col, density = dens)
+% }
+% 
+% curve(dnorm(x), from = q_min, to = q_max, xlab = "", ylab = "", xaxt="n", yaxt="n")
+% axis(side = 1, at = c(-1.96, 0, 1.96))
+% colorArea(from = -1.96, to = 1.96, dnorm, col = "cadetblue3")
+% text(x = 0, y = 0.15, labels = "95%")
+% @
+% }
+% \caption{XXX}
+% \label{fig:norm-dist-area}
+% \end{figure}
+% 
+% This motivates defining the 95\% \emph{confidence interval} of the sample mean:
+% 
+% \begin{itemize}
+% \tightlist
+% \item
+%   (sample mean - 1.96\(\cdot\)SE, sample mean + 1.96\(\cdot\)SE)
+% \end{itemize}
+% 
+% (You'll often see ``mean \(\pm\) 2 standard errors'', or ``mean \(\pm\) 2\(\sigma\)'' used as ``errorbars''; this is just because \(1.96 \approx 2\).)
+% 
+% If we keep collecting samples, in the long run about 95\% of these intervals would contain the true (population) mean within CI.
+% 
+% \textbf{Warning}: This does not mean that there is a 95\% probability that the population mean lies within a given CI!
+% 
+% This is a common misconception of what confidence intervals mean.
+
+
+% This illustrates the \textbf{central limit theorem}:\footnote{More precisely, we are assuming the form of the CLT where the observations are independent and identically distributed. See e.g.,~\href{https://en.wikipedia.org/wiki/Central_limit_theorem}{the Wikipedia page} for more details on variants of the CLT.}
+% 
+% \begin{itemize}
+% \item
+%   For a large enough sample from a random variable with mean \(\mu\) and standard deviation \(\sigma\), the (sampling) distribution of the sample mean
+% 
+%   \begin{itemize}
+%   \item
+%     is approximately normally distributed with mean $\mu$ and standard deviation of $\frac{\sigma}{\sqrt{n}}$
+%   \item
+%     regardless of the population distribution
+%   \end{itemize}
+% % \end{itemize}
+% 
+% One example of this is our estimate of \(p_t\) from \(n\) samples for the tapping data. Even though the actual variable being measured (how many times does a participant tap?) is binomially distributed, our \textbf{estimate} of \(p_t\) is normally distributed.
+% 
+% The central limit theorem is a very important mathematical result which allows us to apply the same tools of inferential statistics to many different kinds of data. Like gravity, it is so fundamental that it's easy to forget how much more complicated life would be without it.
+% 
+
+
+
+
+% 
+% from a speech production experiment examining `tapping' in North American English: the  pronunciation of /t/ as a `tap' [\textipa{R}] in certain contexts---as in North American `atom' ([\textipa{"{\ae}R@m}]), versus `atomic' ([\textipa{@"t\textsuperscript{h}Am1k}]).  Of primary interest was whether the presence of a syntactic boundary following the /t/ (column \ttt{syntax}), as in intransitive sentences like (1) but not in transitive sentences like (2), affects whether speakers use a tap or not (column \ttt{tapped}):
+% 
+% \begin{enumerate}
+% \item \ttt{syntax} = \emph{intransitive}: "If you'd like to ea\underline{t}, early lunch is served."
+% \item \ttt{syntax} = \emph{transitive}: "If you'd like to ea\underline{t} early, lunch is served."
+% \end{enumerate}
+% 
+% 
+% 
+
+
+
+% 
+% 
+% <<>>=
+% set.seed(12) ## this is just inserted for pedagogical purposes to make sure you'll get the same results as seen here. 
+% central.limit <- function(n = 15, m = 1000, qq = FALSE, df1 = 6, 
+%                          df2 = 200, xlow = 0, xhigh = 2.5) {
+%   means <- vector()
+%   
+%   for (i in 1:m) {
+%     data <- rf(n, df1, df2)
+%     means[i] <- mean(data)
+%   }
+%   if (qq) {
+%     x = qqnorm(means)$x
+%     qqline(means)
+%     caption = paste("n=",n,", Correlation = ", signif(cor(means,x), 3))
+%     mtext(caption)
+%   } else {
+%     title <- paste("Sample size = ", n)
+%     hist(means, xlim = c(xlow, xhigh), main = title, freq = F)
+%     plot(function(x) dnorm(x, mean=mean(means), sd=sd(means)), xlow, xhigh, add=T)
+%     plot(function(x) df(x, df1, df2), xlow, xhigh, add=T)
+%     caption <- paste("Standard error = ", signif(sd(means), 3))
+%     mtext(caption)
+%   }
+% }
+% @
+% 
+% \begin{figure}
+% 
+% {\centering 
+% <<echo=FALSE, fig.width=6, fig.height=6>>=
+% central.limit(10)
+% central.limit(50)
+% @
+% }
+% 
+% \caption{Johnson figure replication 3}\label{fig:johnson-3}
+% \end{figure}
+%
+%(These figures replicate Fig. 2.3 from @johnson2008quantitative, using similar code to Johnson's.)
+
+\subsubsection{Example}
+
+Let's look at the (sample) mean and (approximate) 95\% confidence intervals for the two examples we've considered so far: transition duration as a function of speaker gender in the \ttt{transitions} dataset, and the likelihood of a verb being irregular in the \ttt{regularity} dataset.  
+%For the \ttt{regularity} dataset, we show how this likelihood depends on which auxiliary class the verb is in.
+
+Figure~\ref{fig:ci-plots} shows these data summaries, using the two methods for  confidence intervals discussed above.  (The ggplot2 code is not shown, as always, but is in the code file for this chapter.)
+
+% The \texttt{ggplot2} package includes useful functionality to plot such data summaries, through the \texttt{stat\_summary} function. This code makes the plots in Figure~\ref{fig:ci-plots}, using the two methods for  confidence intervals discussed above:
+
+<<ci-plots, echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap="Left: mean transition duration as a function of Speaker B's gender for the \\ttt{transitions} dataset, with approximate  95\\% confidence intervals (mean $\\pm$ 1.96$\\cdot$standard error). Right: proportion of irregular verbs as a function of auxiliary class for the \\ttt{regularity} dataset, with bootstrapped 95\\% confidence intervals.">>=
+## Using 1.96 xSE-based confidence intervals
+transitions %>% ggplot(aes(x = sexB, y = dur)) + 
+  stat_summary(fun.data = "mean_se", fun.args = list(mult = 1.96)) +
+  xlab("Speaker B gender") + ylab("Transition dur. (msec)")
+## Using bootstrapped confidence intervals
+regularity %>% ggplot(aes(x = Auxiliary, y = 2-as.numeric(Regularity))) + 
+  stat_summary(fun.data = "mean_cl_boot") + 
+  xlab("Auxiliary") + ylab("Prop. irregular verbs")
+@
+
+The left plot suggests that transitions to male speakers are longer than to female speakers. The right plot suggests that verbs with auxiliary \tsc{hebben} are less likely to be irregular than other verbs, but it is not clear whether  \tsc{zijn} and \tsc{zijnheb} verbs differ in how likely irregularity is.  The rule of thumb behind these interpretations is that when errorbars represent 95\% confidence intervals, a difference in estimates is `real' if the errorbars do not overlap.\footnote{This intuition, though widespread, is actually too pessimistic.  For two independent means, a more useful heuristic is \citeauthor{cumming2005inference}'s   ``overlap rule of eye'' \citep{cumming2005inference,cumming2012understanding}: non-overlapping errorbars mean $p < 0.01$, just-touching errorbars mean $p \approx 0.01$, and ``moderate overlap'' of errorbars (about 1/2 of errorbar length) corresponds to $p=0.05$. The heuristic works best for larger ($n>10$) and more similar samples (in terms of $n$, $\sigma$).}  
+
+%(now we introduce machinery to formalize this -- estimates/uncertainty of standardized measurements)
+
+\subsection{The $t$-distribution}
+\label{sec:t-distribution}
+
+When analyzing quantitative data, we are usually interested not just in estimating values, but assessing whether they differ from some reference level (usually 0) or from each other.   This means we should use uncertainty in the estimate of the values---the standard error---as the scale on which distances are measured.  This implies dividing means or differences in means by $\sigma/\sqrt{n}$ (the population standard error); the most basic distance we could measure on this scale is $\mu/(\sigma/\sqrt{n})$ (distance of a single mean from 0).  For example, in Figure~\ref{fig:ci-plots} (left), this distance could measure  how many standard errors from 0 the \tsc{female} point lies, letting us assess whether transitions to female speakers have mean duration different from 0.
+
+To estimate $\mu/(\sigma/\sqrt{n})$ , since we cannot directly observe $\mu$ or $\sigma$, we substitute in our estimates of them (equations~\ref{eq:sample-mean}, \ref{eq:standard-error}):
+\begin{equation*}
+t  =   \frac{\hat{\mu}}{\hat{\sigma}/\sqrt{n}}
+\end{equation*}
+
+While $\mu/(\sigma/\sqrt{n})$ is normally distributed (with mean 0 and standard deviation 1), $t$ is not. As the sample size becomes smaller, $s$ becomes more uncertain (note the $n-1$ in equation~\ref{eq:standard-error}), making the distribution of $t$ `wider' than a normal distribution for small $n$.  This distribution is called the \emph{$t$-distribution}, and it is sensitive to sample size.   For a sample of $n$ observations, our quantity of interest (``how many standard errors the mean is from 0'') follows a $t$-distribution with $n-1$ \emph{degrees of freedom} \citep[][\S6.3]{rice2006mathematical}, written:
+\begin{equation}
+\frac{\hat{\mu}}{\hat{\sigma}/\sqrt{n}} \sim t_{n-1}
+\label{eq:t-dist-1}
+\end{equation}
+
+
+The $t$-distribution looks similar to a normal distribution, but has `fatter tails' for smaller sample sizes (\(n < 30\)), as shown in Figure~\ref{fig:t-dist}. Once \(n\) is larger than about 30, the \(t\)-distribution is very similar to a $N(0,1)$ normal distribution.
+%\footnote{This fact will come in handy when we cover more complex regression models, where it can be difficult to calculate the correct degrees of freedom.}
+
+\begin{figure}
+{\centering
+<<echo=F,  out.width='60%', fig.width=default_fig.width*.60/default_out.width>>=
+my_df <- crossing(df=c(1000, 30,20,5,3), x=seq(-4, 4, length.out = 1e3)) %>%
+  group_by(df) %>% nest() %>% 
+  mutate(vals = map(.x = data, .f = ~dt(.x$x, df))) %>% 
+  unnest(cols=c(data, vals))
+  
+my_df %>% ggplot(aes(x=x, y=vals)) + geom_line(aes(color=factor(df), lty=factor(df))) + scale_color_discrete(name = "", labels = c("3", "5", "20", "30", "Z")) + scale_linetype_discrete(name = "", labels = c("3", "5", "20", "30", "Z")) + xlab("") + ylab("Probability density")
+@
+}
+\caption{Probability distributions for a $t_{n-1}$-distribution with varying degrees of freedom ($n-1$ = 3--30), and a normal distribution with $\mu=0$ and $\sigma = 1$ (the $Z$ line).}
+\label{fig:t-dist}
+\end{figure}
+
+This is the first time we have encountered the notion of \emph{degrees of freedom}, often abbreviated $df$, which measures the number of pieces of \textbf{independent} information that go into estimating some parameter(s).  It is hard to give a definition of $df$ that is both precise and intuitive (the Wikipedia page is a good place to start), but $df$ is an important concept  that will often come up in our discussion of different hypothesis tests and regression models.
+
+\subsection{$t$-based confidence intervals}
+\label{sec:t-based-confidence-intervals}
+
+$t$-distributions are common in regression analysis, and it is worth knowing that they are like normal distributions, but a bit wider.
+%developing basic intuitions about them.  The main point to be aware of is that $t$-distributions are a bit wider than a normal distribution. 
+To get a sense of how much wider, we can consider the common case of working with a 95\% confidence interval (CI). Recall that for a normal distribution, 95\% of the probability mass lies within 1.96 standard errors from the mean.   To see how many standard errors from the mean 95\% of probability lies for a $t$-distribution for different sample sizes, we use one of R's built-in functions  for working with $t$-distributions, \ttt{qt()}, which gives a \emph{quantile} value: the point on the distribution below which $X$\% of the probability lies.  (Here, $X$ = 97.5\%).
+
+<<>>=
+# Corresponds to 95% significance level (1-alpha)
+alpha <- 0.05
+
+# mutate: a function from dplyr which adds columns
+data.frame(n  = c(5, 15, 25, 50, 100, 500)) %>% 
+  mutate(ciUpper = qt(1 - alpha / 2, n))
+@
+
+
+Because a \(t\)-distribution is a little wider than a normal distribution,   $t$-based 95\% CIs based on the \(t\)-distribution are slightly larger than CIs based on a normal distribution, especially when $n < 30$. For large enough $n$, the confidence intervals are the same as for a normal distribution (1.96$\cdot$standard error).  Even for $n=5$, a very low sample size, the $t$-distribution is only about 25\% `wider' than a  normal distribution.
+
+%% Took this out, 11/19 -- michaela said a bit more detail needed,
+%% but actually this isn't a fully general point. (technically we should only do this when reporting a mean from an (unknown) normal distribution, right? otherwise, we'd need to use the relevant sample statistic distribution, which wouldn't be t for e.g., 0/1 data.)
+%
+% When reporting 95\% confidence intervals (for errorbars in plots, or to report in a paper), we should technically use $t$-based confidence intervals by default, rather than the confidence intervals based on a normal distribution discussed above (Section~\ref{sec:confidence-intervals}). However, the difference is minimal as long as $n$ isn't too small.
+
+\section{Hypothesis testing}
+\label{sec:ht-1}
+
+Null hypothesis significance testing (NHST) is the most commonly-used  framework for assessing the evidence for an effect across scientific fields, 
+%in behavioral and social sciences, 
+and is what is usually meant by `hypothesis testing'.  We assume that the reader has basic exposure to NHST hypothesis testing (see Section~\ref{sec:other-reading-ch2} otherwise).
+However, the way hypothesis testing is often presented in introductory courses---as a large set of tests to be applied for different kinds of data, often aided by a flowchart---is not good background for how hypothesis tests play into regression modeling. This requires a good \textbf{conceptual} understanding of NHST methods 
+%(especially $t$-statistics/tests) 
+and how they are applied in practice---because the underlying concepts are fundamental to  
+%Regression modeling requires a good \textbf{conceptual} understanding of NHST basics---especially \(t\)-statistics and \(t\)-tests--- because the underlying concepts are fundamental to 
+most regression models used in current practice in language sciences.  If you are comfortable with these things, you can skip to the next chapter.
+
+ % This requires more conceptual understanding of NHST methods, and how they are applied in practice. If you are comfortable with these things, you can skip to the next chapter.
+
+In the remainder of this chapter we review  NHST terminology and concepts which are important as background for regression models introduced in later chapters. 
+%This includes some discussion of how NHST is used in practice, and of commonly-noted problems with NHST analyses and their interpretation (Box~\ref{box:nhst}). 
+We mostly discuss $t$-tests and $z$-tests,  the most common NHST tests,
+%-applied  NHST test (as well as the easier case of $z$-tests, and non-parametric $t$-tests),
+which are central to regression models. These tests are a good vehicle to review NHST terminology and concepts, which are
+%the underlying concepts are fundamental to most statistical methods used in current practice in language sciences (e.g.,~any regression model), and are
+largely shared with other hypothesis tests used for regression modeling (e.g.,\ likelihood ratio tests), which are introduced in later chapters as needed.
+%In the remainder of the book, additional hypothesis tests are  of tests are introduced as needed.  
+% which  are central to regression models and are a good vehicle to review NHST terminology and concepts.   
+% We do not give a comprehensive introduction to common hypothesis tests, but assume you have some exposure (Box~\ref{box:nhst}); In the remainder of the book, additional hypotheses tests used in regression modeling (e.g.,\ likelihood ratio tests) are introduced as needed.  
+
+% Despite real problems with this framework and/or its application, which have led to substantial debate over whether researchers should modify NHST or abandon the framework altogether 
+
+% refresher to NHST and intuitions in how it is used in practice---touching on some  problems commonly noted about NHST and its applications---as background for later chapters.
+%touching on some issues raised in this debate---so that the reader can both be an informed user of NHST and criticially read work where it is used, which 
+
+% We first discuss (NHST-style) hypothesis testing in general, then discuss a couple hypothesis tests ($t$-tests, and their non-parametric analogue) in some detail, to establish terminology and concepts. We do not give a comprehensive introduction to commonly-used hypothesis tests, but assume you have some exposure (Box~\ref{box:nhst}).
+
+% - Could add/summarize somewhere, text from below: "it remains very important to have a good \textbf{conceptual} understanding of how \(t\)-statistics and \(t\)-tests work (as well as the easier case of \(z\)-statistics and \(z\) tests), because the underlying concepts are fundamental to most statistical methods used in current practice in language sciences (e.g.,~any regression model)."
+
+\begin{boxedtext}{Broader context: Null hypothesis significance testing---ubiquity and controversy}
+\label{box:nhst}
+
+Null-hypothesis significance testing has been the dominant paradigm for assessing evidence across a variety of fields for decades, and this unlikely to change anytime soon. For just as long,
+%However, for just as long 
+NHST methods have  been dogged  by controversy, which has increased in recent years with the `replication crisis' and associated criticism of $p$-values.  An extensive literature discusses problems with NHST, ranging from 
+%\citep[e.g.,][]{}. These range from 
+its philosophical foundations (e.g.,\ logically inconsistent assumptions)
+%, `frequentist' probability framework)
+to the non-intuitive nature of its underlying concepts (e.g.,\ `repeated sampling' is unintuitive), to rampant misinterpretation of NHST results (Section~\ref{sec:p-value-misconceptions}).
+%e.g.,\ `a non-significant $p$-value means there is no effect').
+Criticisms of NHST often oppose it to Bayesian methods, which avoid some of the problems , and have become increasingly widely used as computational power increases.  It is beyond the scope of this chapter to even begin to discuss these issues; the American Statistical Association's official position paper on the topic \citep{wasserstein2016asa}, which is a good place to start, gives a ``brief'' bibliography of 40 key references.
+
+What do these issues mean for regression modeling for linguistic data, which make extensive use of NHST methods?  At least in language sciences, 
+%my (personal) impression is that 
+problems with NHST in practice seem to
+%language sciences) 
+result more from a lack of understanding among researchers and mindless application of NHST methods, rather than 
+%of than
+from foundational issues with the paradigm itself. (\citealp[][\S11.9]{NavarroOnline} gives a similar view, for psychologists.) NHST methods can be %famously
+unintuitive for thinking about data and the world, and reporting NHST tests uses a lot of numbers and technical terms---yet because NHST has been the dominant paradigm for decades, it is widely used and rarely explained in scientific papers.
+%because it is assumed we all understand them.  
+It is crucial to have a good conceptual understanding of NHST for regression modeling---both to spot common fallacies (e.g., ``$p>0.05$ means the null hypothesis is true'') and avoid them in your own work.  It is less important to understand the math, though if you find it helpful many good treatments are available (see Section~\ref{sec:other-reading-ch2}).   In this book, we try to build informed and critical understanding of (some) NHST methods, but do not  generally go into broader foundational issues or alternative methodologies (e.g.,\ Bayesian methods).
+
+
+% 
+% the framework is central for regression models commo
+% 
+% a good undersatnding of NHST is crucial both for conducting  regression analyses of linguistic data using tools presented in later chapters, and for critically assessing regression models in the literature---two major goals of this book.    
+% 
+% -  regression models are based on NHST thinking, it is crucial have a good *conceptual* understanding of NHST, to critically read the literature, and to both spot common fallacies (e.g., "a small $p$-value means the null hypothesis is true") and avoid them in your own work (if you use NHST, which you likely will). 
+% 
+% Many issues with NHST in practice arise from a lack of understanding. NHST is a famously unintuitive way of thinking about data and the world, yet NHST results are widely reported in scientific papers without any explanation, because it is assumed we all understand them---emperor's new clothes.   In our view, it is crucial for regression modeling to have a good conceptual what is most important for regression modeling is a NHST
+% 
+% NHST methods are widely used but rarely explained---even though they are a famously unintuitive way of thikning about data and the world, and reporting NHST tests uses a lot of numbers and technical terms.  It is crucial to have a good *conceptual* understanding of NHST, to critically read the literature, and to both spot common fallacies (e.g., "a small $p$-value means the null hypothesis is true") and avoid them in your own work (if you use NHST, which you likely will).  Give references  It is less important to understand the math, though if you find it helpful many good treatments are available.
+
+
+
+% - While this framework and its application are not without controversy (Box~\ref{box:nhst}), NHST has been the dominant paradigm for decades and is likely to remain so. As such, a good undersatnding of NHST is crucial both for conducting  regression analyses of linguistic data using tools presented in later chapters, and for critically assessing regression models in the literature---two major goals of this book.  Regardless of one's views on NHST, it remains very important to have a good \textbf{conceptual} understanding of NHST basics---especially \(t\)-statistics and \(t\)-tests  (as well as the easier case of \(z\)-statistics and \(z\) tests)---because the underlying concepts are fundamental to most statistical methods used in current practice in language sciences (e.g.,~any regression model).
+
+
+
+% ---even though it is a famously unintuitive way of thikning about data and the world, and reporting NHST tests uses a lot of numbers and technical terms.  It is crucial to have a good *conceptual* understanding of NHST, to critically read the literature, and to both spot common fallacies (e.g., "a small $p$-value means the null hypothesis is true") and avoid them in your own work (if you use NHST, which you likely will).  Give refs  It is less important to understand the math, though if you find it helpful many good treatments are available.   In this book  we...
+% 
+% - Controversy, and any thoughts on this. (IMO: both important to be aware of, and not get too caught up in.  McElreath quote about the real issue being how to think about data, not the particular paradigm used. Our empirical observation is that in language sciences issues seem to have more to do with lack of understanding than with the framework/set of tools used.)
+% 
+% - Bayesian hypothesis testing: the main alternative, we discuss briefly in conclusion.
+
+\end{boxedtext}
+% 
+% In this chapter we will introduce:
+% 
+% \begin{itemize}
+% \item
+%   hypothesis testing, at a high level,
+% \item
+%   \(t\) tests, the most commonly-used hypothesis test, in some detail;
+% \item
+%   other hypothesis tests, including non-parametric tests;
+% \item
+%   and some necessary adjacent concepts, such as \(Z\)-scores.
+% \end{itemize}
+
+
+\subsection{Evaluating one sample}
+
+To introduce hypothesis testing, it is useful to have a running example in mind.
+
+\paragraph{Example: One speaker in the \ttt{transitions} data}
+
+Let's assume the following setting, using a subset of the \ttt{transitions} data:
+
+<<echo=FALSE>>=
+transitions_spkr1540 <- filter(transitions, spkB == "spkr1540")
+
+mu_hat <- mean(transitions_spkr1540$dur)
+s_hat <- sd(transitions_spkr1540$dur)
+n_sub <- nrow(transitions_spkr1540)
+se_hat <- s_hat / sqrt(n_sub)
+@
+We observe $n = $\Sexpr{n_sub} floor transitions, to a single male speaker (\tsc{spkr1540}). The sample mean for this speaker is $\hat{\mu}$ = \Sexpr{mu_hat} msec.
+The sample mean is approximately normally distributed (by the central limit theorem), with (population) mean $\mu$ and standard deviation $\frac{\sigma}{\sqrt{n}}$, so the interval $\mu \pm 1.96 \cdot \frac{\sigma}{\sqrt{n}}$ contains approximately 95\% of the probability mass. We don't know $\mu$, but suppose we have a {hypothesis} about it that is meaningful, with respect to a value $\mu_0$---say \(\mu = 0\) ($\mu_0 = 0$) which in the current example would mean ``on average, this speaker starts talking exactly when his interlocutor stops.'' (This would mean that the speaker often interrupts his interlocutor.)  %More commonly, $\mu = 0$ means ``there is no effect'' (of whatever we are measuring).
+
+If we knew the population standard deviation \(\sigma\), we could answer the question, ``is the sample mean far enough away from 0 to be 95\% sure that \(\mu \neq 0\)?''---in the sense that if the true mean were 0, we'd be unlikely to observe a sample mean this large.    For the moment, suppose we magically knew that $\sigma = 300$---so the (true) standard error is \Sexpr{300/sqrt(n_sub)} (300/$\sqrt{n}$), and the sample mean (\Sexpr{mu_hat}) is \Sexpr{mu_hat/(300/sqrt(n_sub))} standard errors from 0.   We could then operationalize our question as, ``how likely is the sample mean to be at least this far from 0?'', using a $N(0, \Sexpr{300/sqrt(n_sub)})$ distribution (Figure~\ref{fig:ht-ex1}).  
+
+% We don't know $\sigma$, so we estimate it to give the standard error  ($s/\sqrt{n}$: Equation~\ref{eq:sd-estimate}): in this example, \Sexpr{s_hat/sqrt(n_sub)} msec.  
+% 
+% 
+% The ratio of the sample mean to the standard error then follows a $t$ distibution, and we we answer our question by probability of getting a sample mean this large (\Sexpr{mu_hat}) under a $t$ distribution with mean 0 and standard deviation \Sexpr{se_hat}.
+
+\begin{figure}
+<<ht-ex1, echo=FALSE,  out.width='45%', fig.width=default_fig.width*.45/default_out.width>>=
+se_real <- 300 / (sqrt(n_sub))
+x=seq(-3.5 * se_real, 3.5 * se_real, length.out = 1e3)
+d=dnorm(x, mean = 0, sd = se_real)
+data.frame(x=x, d=d) %>% ggplot(aes(x=x,y=d)) + geom_line()+ geom_vline(aes(xintercept=mu_hat), lty=2) +  xlab("x") + ylab("Probability density")
+@
+\caption{The distribution of the sample mean (solid line) for \Sexpr{n_sub} observations from $N(0,300)$. The dotted line shows the observed sample mean (\Sexpr{mu_hat}) for one sample.}
+\label{fig:ht-ex1}
+\end{figure}
+
+
+
+% 
+% We  use the over  thus the standard error, then calculate the probability distribution of values the sample mean could take on, given \(\mu = 0\), and given some uncertainty in using \(SE\)---and use this distribution to answer our question. This procedure is called \emph{hypothesis testing}.
+
+% 
+% \hypertarget{example-1}{%
+% \subsubsection*{Example}\label{example-1}}
+% \addcontentsline{toc}{subsubsection}{Example}
+% 
+% Suppose that for some sample:
+% 
+% \begin{itemize}
+% \item
+%   Sample mean = 10
+% \item
+%   SE = 5
+% \item
+%   Hypothesized \(\mu\) = 0.
+% \end{itemize}
+% 
+% In this example, we are assuming that we (magically) know the the true value of the standard error (using \(\sigma\)).
+% 
+% This plot shows how far out the sample mean (10) lies, for a normal distribution with mean 0 and standard deviation 5:
+% 
+% 
+% We would like to be able to answer: is the sample mean far enough away from \(\mu\) to be 95\% sure that \(\mu\) isn't 0?
+
+%\hypertarget{z-scores}{%
+\subsection{$z$-scores and $Z$-tests}\label{sec:z-scores}
+
+To answer this question it is useful to introduce the notion of a \emph{z-score}, which measures how many standard deviations an observation \(x_i\) is from a mean:
+
+\begin{equation*}
+  z_i = \frac{x_i - \mu}{\sigma}
+\end{equation*}
+
+If the observations are normally distributed, the \(z_i\) values follow a standard normal distribution ($\mu=0, \sigma=1$).
+%normally distributed as well, with mean 0 and standard deviation 1.
+%(Note that \(\mu\) and \(\sigma\) here are population parameters.)  
+% When you draw from any random variable $z$ with a normal distribution, it is useful to remember that 
+% 
+% \begin{itemize}
+% \item The probability of a value with $|z|<1$ is 0.68 
+% \item The probability of a value with \(|z| < 2\) is 0.96
+% \item The probability of a value with \(|z| < 3\) is 0.002
+% \end{itemize}
+% 
+% So about 2/3 of probability lies within one $\sigma$ from the mean, and almost all probability lies within three $\sigma$.
+
+%In the current example, 
+We can test our hypothesis by calculating how many standard errors the observed sample mean lies from $\mu_0$:
+\begin{equation}
+z = \frac{(\hat{\mu} - \mu_0)}{\sigma/\sqrt{n}},
+\label{eq:z-ex1}
+\end{equation}
+which in our example ($\hat{\mu} = \Sexpr{mu_hat}$, $\mu_0 = 0$, $\sigma = 300$, $n = \Sexpr{n_sub}$) gives $z = \Sexpr{mu_hat/(300/sqrt(n_sub))}$.  We then calculate how much probability lies at least this far from 0 for an $N(0,1)$ distribution: 
+<<>>=
+transitions_spkr1540 <- filter(transitions, spkB == "spkr1540")
+
+mu_hat <- mean(transitions_spkr1540$dur)
+s_hat <- sd(transitions_spkr1540$dur)
+n_sub <- nrow(transitions_spkr1540)
+se_hat <- s_hat / sqrt(n_sub)
+# Assumed population value of SE
+se_true <- 300 / sqrt(n_sub)
+2 * (1 - pnorm(mean = 0, sd = 1, mu_hat / se_true))
+@
+
+This is the probability of observing a sample mean at least this far from 0.
+%is \Sexpr{2*(1-pnorm(mean = 0, sd = 1, mu_hat/se_true))}.  
+
+The procedure above is called a \emph{$z$-test}, after the test statistic.
+
+\subsection{$t$-tests: One-sample}
+\label{sec:t-test-one-sample}
+
+In the example above, we assumed that we  knew the population standard error, but this isn't usually true  Instead, we estimate the standard error from the sample as $\hat{\sigma}/\sqrt{n}$, using equation \eqref{eq:standard-error}, and
+%We 
+use it to make an estimate of how far the sample mean is from 
+%the ``null value'' 
+$\mu_0$ in units of standard errors (equation~\ref{eq:z-ex1}):
+\begin{equation*}
+  t = \frac{\hat{\mu}-\mu_0}{\hat{\sigma}/\sqrt{n}}
+\end{equation*}
+
+This is the \emph{$t$-statistic}, an estimate of $z$ that can be calculated just using the data in the sample.
+
+The $t$-statistic follows a $t$-distribution (Section~\ref{sec:t-distribution})  with $n-1$ degrees of freedom, which is slightly wider than the 
+%this distribution has ``fatter tails'' than the 
+normal ($N(0,1)$) distribution of $z$,
+%for small $n$, 
+reflecting greater uncertainty in estimating the standard error (Figure~\ref{fig:t-dist}).  
+
+$t$ in this case is the \emph{test statistic}---a value we compute based on the sample, which we will then use to decide between two hypotheses: the \emph{null hypothesis} ($H_0$) and the alternative hypothesis ($H_a$).  Here, these are:
+\begin{itemize}
+\item
+  {Null hypothesis}: $\mu = \mu_0$
+\item
+  {Alternative hypothesis}: $\mu \neq \mu_0$ 
+\end{itemize}
+
+That is: the population mean is either the null value (usually 0), or it isn't.  For our example, the logic of hypothesis testing is:
+\begin{itemize}
+\item
+  If \(H_0\) were true (``under the null hypothesis''), \(t\) would follow a \(t_{n-1}\) distribution.
+\item
+  Calculate how likely we are to get a value of \(t\) at least as extreme as the value we observed, using the \(t\)-distribution. This is \(p\) (the \emph{significance}, or \emph{\(p\)-value}).
+\item
+  If \(p\) is less than the \emph{significance level} \(\alpha\)  (a number between 0 and 1), we reject the null hypothesis.  Otherwise, we fail to reject the null hypothesis.\footnote{The latter is sometimes informally stated as `accepting the null hypothesis', although this is not technically correct.}
+  
+\end{itemize}
+
+The procedure above is called a (one-sample) \emph{$t$-test}.
+%after the distribution of the test statistic. 
+
+For our example,  we would calculate $p$ as follows (using $\alpha = 0.05$):
+<<>>=
+# Estimated standard error
+se_hat <- sd(transitions_spkr1540$dur) / sqrt(n_sub)
+t <- mu_hat / se_hat
+
+# Probability that t lies at least this far from 0
+2 * (1 - pt(mu_hat / se_hat, df = n_sub - 1))
+@
+
+Or we could just use R's built-in \ttt{t.test} function:
+<<output.lines=5:6>>=
+t.test(transitions_spkr1540$dur)
+@
+
+$p$ is slightly higher than for the $z$-test above (\Sexpr{formatP(2*(1-pt(mu_hat/se_hat, df = n_sub-1)))}, versus \Sexpr{formatP(2 * (1 - pnorm(mean = 0, sd = 1, mu_hat / se_true)), pPrefix=FALSE)}),
+%} is slightly higher than for the $z$-test above (Section~\ref{sec:z-scores}),
+as expected due to increased uncertainty from estimating the standard error.  
+%% ``At least as extreme'' in our description of the logic of hypothesis testing above means ``at least as far from 0 as the observed value (if the null hypothesis were true)''. This is a \emph{two-sided} significance test, because $p$ sums the area in both extremes of the $t$-distribution (very negative or very positive $t$). Two-sided tests are by far the most commonly used in practice.
+
+%in practice.
+%the name comes from $p$ giving 
+%where we calculate the probability that the {absolute value} of the sample mean lies at least as far from 0 as the observed value (if the null hypothesis were true).  Two tailed significance tests are by far the most commonly-used in practice.  
+
+%% It is also possible to carry out a \emph{one-sided} significance test, which asks: ``How likely is a value at least this \underline{positive} of the test statistic?'' (or negative).
+
+
+
+% ---whether --- which is by far the most commonly-used in practice. (For example, the default for R's \texttt{t.test} is a two-tailed test.)
+% 
+% It is also possible to carry out a \emph{one-tailed} significance test, which asks: ``How likely is a value at least this \textbf{positive} of the test statistic?'' (Or ``at least this negative.'') The \href{https://en.wikipedia.org/wiki/One-_and_two-tailed_tests}{Wikipedia page on one/two-tailed tests} has a good visualization of the one-tailed test.
+% The letter \(p\) (the \emph{significance}) is conventionally used for ``the probability of observing a value at least this big'' in hypothesis testing, and written $p = \Sexpr{2*(1-pnorm(mean = 0, sd = 1, mu_hat/se_true))}$.
+% 
+% Among the reasons two-tailed significance tests are the default:
+% 
+% \begin{itemize}
+% \item
+%   They are ``more conservative'': \(p\) values will be higher, making it less likely to reject the null hypothesis in a case where it is actually true (a ``Type I error'').
+% \item
+%   They do not require you to choose a direction (``positive'' or ``negative'' above) to apply a one-sided test, instead remaining agnostic on the direction of any observed effect.
+% \end{itemize}
+
+
+
+% Classic textbooks at this point run through examples of calculating \(t\) statistics and carrying out \(t\) tests by hand, using tables to calculate \(p\) for a given sample. This is a bit of a contrived exercise in 2018, when \(t\)-tests can just be carried out automatically (even in Excel). But it remains very important to have a good \textbf{conceptual} understanding of how \(t\)-statistics and \(t\)-tests work (as well as the easier case of \(z\)-statistics and \(z\) tests), because the underlying concepts are fundamental to most statistical methods used in current practice in language sciences (e.g.,~any regression model).
+% 
+
+\subsection{Hypothesis testing in general}
+\label{sec:hyp-test-general}
+
+More generally, (NHST) hypothesis testing follows these steps:
+
+\begin{itemize}
+\item
+  Choose a significance level, \(\alpha\).
+\item
+  Formulate a null hypothesis, \(H_0\).
+\item
+  Formulate an alternative hypothesis, \(H_a\).
+\item
+  Gather data, calculate a test statistic, \(T\).
+\item
+  Determine the probability of obtaining \(T\) or a more extreme value under \(H_0\), the \(p\)-value.
+\item
+  If \(p \leq \alpha\), reject \(H_0\). Otherwise, fail to reject $H_0$.
+\end{itemize}
+
+This procedure underlies most inferential statistics commonly applied to linguistic data---\(t\)-tests, ANOVAs, linear regressions, mixed-effects regressions---though the steps are not usually explicitly stated.  In particular, it is often assumed that:
+\begin{enumerate}[label=(\alph*)]
+\item
+  \(\alpha=0.05\) : we have to be ``95\% certain'' to reject the null hypothesis.
+\item
+  The null hypothesis  is a \emph{nil hypothesis} \citep[][69]{kline2013beyond}: $H_0$ corresponds to ``no difference'' or ``no effect''. (For a $t$-test, this is $H_0: \mu_0 = 0$.) 
+  %\mu_0 = 0$: ``no difference'' or ``the parameter is zero''
+\item
+  A two-sided test is used (for tests where one and two-sided options are possible).
+\end{enumerate}
+
+Why these assumptions?  (a) is purely convention, widely used in behavioral and social sciences.  There is no inherent justification for this particular value of $\alpha$, which means that researchers accept making a Type I error 1/20 of the time. We discuss Type I errors and the consequences of different $\alpha$ values in the next chapter.  
+
+(b) is also convention of a sort: common applications of hypothesis tests assume a null hypothesis of this form, such as assessing whether a predictor has an effect in a linear regression model ($H_0$: no effect), or whether two categorical variables are associated ($H_0$: no association).
+
+On (c): in a \emph{two-sided} test, $p$ measures the probability of the test statistic lying at least as far from 0 as the observed value---in either direction---if $H_0$ were true, while in a \emph{one-sided} test, $p$  measures the probability of the test statistic being at least as {positive} (or negative) as the observed value (= far from zero, in one direction).
+%or negative asks: ``How likely is a value at least this \underline{positive} of the test statistic?'' (or negative)
+% ``At least as extreme'' in our description of the logic of hypothesis testing above means ``at least as far from 0 as the observed value (if the null hypothesis were true)''. This is a \emph{two-sided} significance test, because $p$ sums the area in both extremes of the $t$-distribution (very negative or very positive $t$). Two-sided tests are by far the most commonly used.
+%in practice.
+%the name comes from $p$ giving 
+%where we calculate the probability that the {absolute value} of the sample mean lies at least as far from 0 as the observed value (if the null hypothesis were true).  Two tailed significance tests are by far the most commonly-used in practice.  
+%It is also possible to carry out a \emph{one-sided} significance test, which asks: ``How likely is a value at least this \underline{positive} of the test statistic?'' (or negative).  
+Two-sided tests are the default principally because they are `more conservative' than one-sided tests (less likely to falsely reject the null hypothesis: see Section~\ref{sec:conservative-anti}),
+and they do not require choosing an effect direction, 
+%as for a one-sided test,
+%(``positive'' or ``negative'' above), as for a one-sided test, 
+instead remaining agnostic on the direction of the effect. 
+
+However, when the research hypothesis
+%you are testing 
+calls for it, you would use a one-sided test.
+%\footnote{An influential list of common misconceptions of $p$-values by \citet{greenland2016statistical}, discussed in Section~\ref{sec:p-value-misconceptions}, even includes ``one should always use two-sided $p$-values'' (as a misconception).} 
+For example, to assess whether transitions to speaker 1540 in the \ttt{transitions} dataset are at least 0 msec long, you'd conduct a one-sided version of the $t$-test in Section~\ref{sec:t-test-one-sample}, with null hypothesis $H_0: \mu \le 0$:
+
+<<output.lines=5:6>>=
+t.test(transitions_spkr1540$dur, alternative = "greater")
+@
+
+\begin{boxedtext}{Broader context: NHST is a hybrid of two philosophies}
+
+The logic of null hypothesis significance testing (NHST), presented at the beginning of 
+%steps 0-5 of 
+Section~\ref{sec:hyp-test-general} and ubiquitous in current practice, is in fact a hybrid of two very different philosophies for assessing evidence for an effect relative to a `null hypothesis': Neyman-Pearson and Fisherian. %approaches. testing. 
+%roughly, as a dichotomous decision (reject/do not reject) or a gradient measure of confidence against the null hypothesis ($p$).
+
+In the Neyman-Pearson approach, hypothesis testing is a binary decision process (reject/do not reject), leading to  $H_a$ or $H_0$.  All that matters for the decision is whether you find $p < \alpha$, and there is no conceptual difference between the two outcomes---rejecting or failing to reject the null hypothesis. 
+%the null or alternative hypotheses. 
+Thus, there is no notion of `significance' (except as a descriptive term for $p<\alpha$), and describing results as ``highly significant'' versus ``significant'' (e.g.,\ $p=0.002$ vs.\ $p=0.04$, when $\alpha = 0.05$) makes no sense.
+
+In the Fisherian approach, there is only a null hypothesis, and testing assesses `significance': a gradient measure of confidence against the null hypothesis (assessed by $p$).  In this interpretation lower values of $p$ offer stronger evidence against $H_0$. The `significance level' $\alpha$ is a cut-off point defined for convenience, but is not essential. An alternative hypothesis is not specified; implicitly it is just `not $H_0$'. All interpretation relates to whether the null hypothesis can be rejected.  Thus, there is no notion of a low $p$-value supporting an alternative hypothesis (even though this is usually the hypothesis of interest to the researcher)---it just gives high confidence against the null.
+
+In practice, NHST as it is taught to and applied by researchers is a hybrid of these approaches, which results in sometimes thinking in Neyman-Pearson (binary decision) and sometimes in Fisherian (gradient significance) terms. Roughly, many researchers ``follow Neyman-Pearson procedurally but Fisher philosophically'' \citep{perezgonzalez2015fisher}.  For example, it is common to write in the same paragraph that an effect is ``highly significant'' (which implies that $p$ is a gradient measure) and that we can ``reject the null hypothesis'' (a binary decision).
+
+It has long been pointed out that this hybrid nature is a problem---the two approaches rest on fundamentally different premises and lead to different interpretations of results, and the logical inconsistency is at the root of many common NHST misconceptions (e.g.,\ \citealp{perezgonzalez2015fisher}; \citealp{gigerenzer2004mindless}; \citealp[][chap.~1, 3]{kline2013beyond}; and references therein).
+%\citep[e.g.,][and references therein to earlier work]{perezgonzalez2015fisher,} gives a good review and references to  (and further references). 
+
+Whether these problems mean researchers should overhaul a hybrid approach completely or be better-informed users is a matter of debate, but in practice a hybrid approach is deeply ingrained in current practice in language sciences, as in most fields.  To orient you in current practice, we will follow the hybrid approach in this book, 
+%In this book, we'll follow the hybrid approach, 
+but highlight common pitfalls and how to avoid them.
+\end{boxedtext}
+
+% 
+% hypothesis testing as a binary decision process, leading to acceptance or rejection.
+% 
+% - The logic in 0-5 assumes hypothesis testing as a binary decision process.  This is technically the Neyman-Pearson interpretation, under which all that matters is if you find $p$ below $\alpha$ or not.
+% 
+% - In practice (can cite Rice) often want a more gradient notion than "accept or reject", so report $p$-value, and think of it as a measure of confidence (in getting a result at least as extreme as observed);  this is the Fisher intepretation: $p=0.001$ offers `stronger evidence' than $p=0.04$.  
+% 
+% - In practice researchers applying and reporting NHST methods use a hybrid---sometimes thinking in N-P and sometimes in Fisherian terms---which is a problem because they rest on fundamentally different premises and lead to different interpretations of results.  A lot has been written about philosophical and practical problems with this hybrid approach (Perezgonzalez 2015: nice review), but it is deeply engrained in current practice. In this book we'll follow common practice (hybrid approach), but highlight common pitfalls and how to avoid them.
+
+
+
+\subsection{Paired $t$-tests}
+\label{sec:paired-t-tests}
+
+A useful application of a one-sample \(t\)-test, is for \emph{paired} data, where the data consists of pairs of observations
+%(A and B) 
+from two samples, and the difference between the two samples is of interest.
+%A and B is of interest.  
+
+For example, for the \ttt{transitions} data, we could assess whether turns  get shorter over the course of a conversation, on average, by computing for each conversation the difference between:
+\begin{enumerate}
+\item Mean \ttt{dur} during the first minute
+\item Mean \ttt{dur} after the first minute
+\end{enumerate}
+then submitting these differences to a one-sample t-test (Exercise~\ref{ex:paired-t-test}).
+
+% 
+% \begin{itemize}
+% \item
+%   For the \texttt{tapping} data: ``tapping rate in intransitive items'' and ``tapping rate in transitive items'' for the \(i\)th participant.
+% 
+%   \begin{itemize}
+%   \tightlist
+%   \item
+%     Can be used to ask: ``does tapping rate differ by-participant between transitive and intransitive items?''
+%   \end{itemize}
+% \item
+%   For the \protect\hyperlink{transitionsdata}{\texttt{transitions} data}:
+% 
+%   \begin{itemize}
+%   \item
+%     ``Mean transition duration during the first minute''``, and''mean transition duration after the first minute", for each conversation
+%   \item
+%     Can be used to ask: ``do floor transition times differ between the first minute of a conversation and the rest of the conversation?''"
+%   \end{itemize}
+% \end{itemize}
+% 
+% The \emph{paired \(t\)-test}, essentially a one-sample \(t\)-test on pairwise differences between observations, is appropriate for this type of data.
+
+
+%\subsection{Comparing two samples}
+
+%Two-sample $t$-tests and other variants}
+
+\subsection{Two-sample $t$-tests}
+\label{sec:ht-2}
+
+The one-sample \(t\)-test is mostly used as part of more complex statistical procedures (e.g.,~linear regression: Section~\ref{sec:slr-hypothesis-testing}). More commonly used on its own is the \emph{two-sample \(t\)-test}, to examine the difference in means between two groups.
+
+For example, we can return to the question posed in Section~\ref{sec:point-estimation} for the \ttt{transitions\_sub} data: What effect does the gender of speaker B
+%(\texttt{sexB})
+have on transition duration?  The empirical data 
+%distribution of the data 
+(Figure~\ref{fig:transitions-sexb}) suggests that transitions to male speakers may be slightly longer on average.  A two-sample \(t\)-test lets us test whether this difference is significant.
+
+<<transitions-sexb, echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap="Distribution of transition duration as a function of speaker B's gender for the \\texttt{transitions} data (violin plots), with mean value (dots).">>=
+ggplot(aes(x = sexB), data = transitions_sub) + 
+  geom_violin(aes(y = dur, fill = sexB), alpha=0.5) +  
+  stat_summary(aes(y = dur, group = sexB), fun.data = "mean_cl_boot") + 
+  xlab("Speaker B gender") +
+  ylab("Transition dur. (msec)") +
+  theme(legend.position = "none") + 
+  scale_fill_grey()
+@
+
+\subsubsection{Equal variances}
+
+A two-sample \(t\)-test assumes two \emph{independent} samples: the values drawn for one sample cannot be predicted at all from the values drawn from the other sample. The two samples are assumed to be drawn from normal distributions with (in the simplest setting) the same standard deviation:
+\begin{itemize}
+\item
+  Sample 1: \(n_1\) observations (\(x^1_1, \ldots, x^{n_1}_1\)) from \(N(\mu_1, \sigma)\)
+\item
+  Sample 2: \(n_2\) observations (\(x^1_2, \ldots, x^{n_2}_2\)) from \(N(\mu_2, \sigma)\)
+\end{itemize}
+
+Let $\hat{\mu}_1$ and $\hat{\mu}_2$ be the sample means---the averages of the observations in each sample.  We are interested in the difference in sample means: $\hat{\mu}_1 - \hat{\mu}_2$.
+% The sample means are the averages of the observations in each sample:
+% \[
+% \hat{\mu}_1 = \frac{\sum_{i=1}^{n_1} x^i_1}{n_1}, \quad \hat{\mu}_2 \frac{\sum_{i=1}^{n_2} x^i_2}{n_2}
+% \]
+
+Each sample mean is normally distributed, so their difference is as well (because the sum of normally-distributed random variables is normally distributed: Box~\ref{sec:normal-facts}).   We want to estimate a measure analogous to $Z$ for the one-sample $t$-test, but now defined as:
+
+\begin{equation*}
+Z = \frac{\text{difference in sample means}}{\text{standard error of diff. in sample means}}
+\end{equation*}
+
+Similarly to the one-sample $t$-test, we must estimate the standard error.  The sample standard deviations \(\hat{\sigma}_1\) and \(\hat{\sigma}_2\) are calculated as in equation \eqref{eq:sd-estimate}. Since we are assuming the two samples have equal variance, we can estimate a single sample standard deviation $\hat{\sigma}$:
+\begin{equation*}
+\hat{\sigma} = \sqrt{\frac{(n_1-1) \hat{\sigma}_1^2 + (n_2-1) \hat{\sigma}_2^2}{n_1+n_2-2}}
+\end{equation*}
+That is, we are estimating the variance $\sigma^2$ as the average of the two sample variances \(\hat{\sigma}_1^2\) and \(\hat{\sigma}_2^2\), weighted by their summed degrees of freedom ($n_1 - 1$, $n_2 - 2$), which 
+%turns 
+is an unbiased estimator of $\sigma$ \citep[e.g.,][42--43]{kline2013beyond}.
+
+After further math, we get the following test statistic for the difference in sample means:
+\begin{equation}
+t = \frac{\bar{x}_1-\bar{x}_2}{\hat{\sigma}\sqrt{(1/n_1 + 1/n_2)}},
+\label{eq:hyptest2}
+\end{equation}
+which  follows a \(t\) distribution with \(n_1 + n_2 - 2\) degrees of freedom.
+%Note that this is just the sum of the degrees of freedom for each sample ($n_1 - 1$, $n_2 - 1$).
+
+% FUTURE: maybe simplify above to essentials
+
+We then can carry out a two-sample $t$-test with:
+
+\begin{itemize}
+\item
+  Null hypothesis:  \(H_0 ~:~ \mu_1 - \mu_2 = 0\) (equal means)
+\item Alternative hypothesis:  \(H_a ~:~ \mu_1 - \mu_2 \neq 0\)) (means are not equal)
+\end{itemize}
+
+by computing how far out $t$ is on a $t$-distribution with $n_1 + n_2 - 2$ degrees of freedom.
+
+
+%   Choose \(\alpha\)
+% \item
+%   Compute \(t\)
+% \item
+%   Compute \(p\)-value by seeing how far out \(t\) is on a \(t_{n_1 + n_2 - 2}\) distribution.
+% \end{itemize}
+
+% (And also calculate (1-\(\alpha\))\% confidence intervals for the difference in means, if desired.)
+% 
+% As an aside: it is worth noting that there is more uncertainty when estimating the difference between the means of the two samples (\(\bar{x}_1\) and \(\bar{x}_2\))---the denominator of Equation \eqref{eq:hyptest2}---than when estimating either of these values alone.\footnote{That is, the standard error in the denominator is larger than \(s/\sqrt{n_1}\) or \(s/\sqrt{n_2}\)} This illustrates a very general fact: \textbf{the more things are being estimated to determine a quantity \(X\), the more uncertainty there is in our estimate of \(X\)}.
+% 
+
+\subsubsection{Unequal variances}
+
+When testing whether two samples differ there is not usually any reason to think that the samples have equal variances. In practice one should assume by default that the samples have unequal variances---as R does in the \texttt{t.test} function.
+%
+This default is the \emph{Welch \(t\)-test}, which corrects the degrees of freedom and SE calculations for unequal variances.  (The formulas get complicated, which is why it is useful for exposition to first assume equal variances.)  
+
+This variant of the \(t\)-test---two-sample, unequal variances---is by far the most commonly used in practice, and is often just called ``a \(t\)-test'' in papers.
+
+\begin{boxedtext}{Broader context: Uncertainties add}
+
+The standard error and degrees of freedom estimates for a Welch $t$-test  illustrate useful broader points (\citealp[][47]{kline2013beyond}; \citealp[][\S3.4.2]{baguley2012serious}).
+
+The estimated standard error is:
+\begin{equation*}
+SE_{Welch} = \sqrt{\frac{\hat{\sigma}_1^2}{n_1} + \frac{\hat{\sigma}_2^2}{n_2}}
+\end{equation*}
+where $\hat{\sigma}_1/\sqrt{n_1}$ and $\hat{\sigma}_2\sqrt{n}$ are the estimated standard errors for  each sample.  So we can think of this formula as $SE_{\mu_1 - \mu_2}^2 = SE_{\mu_1}^2 + SE_{\mu_2}^2$: the error in estimating a difference in two quantities is the sum of the error in estimating either quantity. More generally, \textbf{uncertainties in means add}: when estimating any sum/difference of interest in a quantitative study, your estimate is at least as noisy as each individual condition.
+
+The estimated degrees of freedom are:
+\begin{equation*}
+df_{Welch} = \frac{SE_{Welch}^4}{\frac{SE_1^4}{df_1} + \frac{SE_2^4}{df_2}}
+\end{equation*}
+where $df_1$ and $df_2$ are the degrees of freedom for each sample ($n_1-1$, $n_2-1$).
+While this formula is not intuitive, you can convince yourself that the lower $df_1$ or $df_2$ are, the lower $df_{Welch}$ is. Since lower $df$ means ``this $t$-test involves more uncertainty in estimating a variance'', the formula can  be understood as \textbf{uncertainties in variance add}: the uncertainty in estimating a variance in a difference in two quantities is a function of the error in estimating the variance in either quantity.   
+% 
+% The formula above is one application of the \emph{Welch-Satterthwaite approximation}, which is often used in statistics to approximate degrees of freedom and variances of sums of variables. One application
+
+
+% FUTURE
+% The last formula applies the \emph{Satterthwaite approximation} for calculating the ``effective degrees of freedom'' for a ``pooled variance'' estimate (XX REF).  This is worth knowing because these terms come up often in R output when interpreting mixed-effects regression models---but they really just come down to two-sample $t$-tests. 
+\end{boxedtext}
+
+\subsubsection{Example}
+\label{sec:welch-example}
+
+To test the effect of Speaker B gender on transition duration in the \ttt{transitions\_sub} data, we can carry out a Welch two-sample $t$-test:
+<<output.lines=2:8>>=
+t.test(dur ~ sexB, data = transitions_sub)
+@
+
+
+<<echo=FALSE>>=
+trans_tt <-  t.test(dur ~ sexB, data = transitions_sub)
+ci_tt <- trans_tt$conf.int
+se_tt <- transitions_sub %>%
+  group_by(sexB) %>% 
+  summarise(s = sd(dur), SE = sd(dur) / sqrt(n()), n = n()) %>% 
+  remove_rownames() %>% 
+  column_to_rownames(var = "sexB")
+@
+
+Durations to male speakers are longer than durations to female speakers; the difference is significant at the $\alpha=0.05$ level (\Sexpr{formatP(trans_tt$p.value)}), with 95\% confidence interval $[\Sexpr{ci_tt[1]}, \Sexpr{ci_tt[2]}]$ for the male/female difference.
+%(Note that R output uses \ttt{2.2e-16} to mean ``effectively zero''.)  
+The first argument to \ttt{t.test} is a `formula', using R's formula notation; roughly, `\ttt{Y $\sim$ X}' means `predict \ttt{Y} as a function of \ttt{X}'. This notation is explained further when we get to regression models 
+%makes more sense in the context of regression models, so we explain when we %get there 
+(Box~\ref{box:formula-notation}).  
+%Roughly, `\ttt{X $\sim$ Y}' means `predict X as a function of Y'. 
+
+% As an aside: it is worth noting that there is more uncertainty when estimating the difference between the means of the two samples (\(\bar{x}_1\) and \(\bar{x}_2\))---the denominator of Equation \eqref{eq:hyptest2}---than when estimating either of these values alone.\footnote{That is, the standard error in the denominator is larger than \(s/\sqrt{n_1}\) or \(s/\sqrt{n_2}\)} This illustrates a very general fact: \textbf{the more things are being estimated to determine a quantity \(X\), the more uncertainty there is in our estimate of \(X\)}.
+
+\section{Parametric and non-parametric tests}
+
+In \emph{parametric} tests, such as $Z$-tests and \(t\)-tests (Section~\ref{sec:z-scores}, \ref{sec:t-test-one-sample}),  we assume sample(s) drawn from a distribution with a particular `functional form'---an equation characterized by a few parameters, like a normal distribution (\(\mu\), \(\sigma\), \(n\)) or a binomial distribution (\(p\), \(n\)). For example, a two-sample \(t\)-test assumes that the samples are normally distributed with means \(\mu_1\) and \(\mu_2\), and variances \(\sigma_1\) and \(\sigma_2\). The null hypothesis (\(\mu_1 = \mu_2\)) and alternative hypothesis (\(\mu_1 \neq \mu_2\)) are defined with respect to these parameters.
+
+In contrast, \emph{non-parametric} hypothesis tests do not assume that the sample(s) being tested are drawn from a particular type of distribution (e.g.,~normal), and tend to have fewer other assumptions.  There are non-parametric analogues to all commonly-used parametric hypothesis tests, of which we discuss one example here. 
+
+%% FUTURE: refs on where to read more about the laundry list of non-parametric tests? 
+
+\subsection{Wilcoxon tests}
+
+The most commonly-used non-parametric analogue to \(t\)-tests are the \emph{Wilcoxon signed-rank test} (for one sample, or paired data) and the \emph{Wilcoxon rank-sum test} (for two samples).\footnote{
+%The terminology is not standardized: 
+The one-sample test is sometimes called `Wilcoxon $t$-test' (since it is analogous to a one-sample \(t\)-test), and the two sample test is also called a `Mann-Whitney \(U\)-test' or a `Mann-Whitney-Wilcoxon test' or a variation.} It is easiest to think of all these as variants of `Wilcoxon tests', analogous to `\(t\)-tests', which have the same variants: one-sample, two-sample, and paired.  (Since non-parametric tests don't assume anything about population variances, there are no equal or unequal-variance versions.)  
+%Unlike \(t\)-tests, Wilcoxon tests do not assume that sample(s) are drawn from a normal distribution (or any particular distribution). 
+Wilcoxon tests have the same independence assumptions as $t$-tests: for a two-sample test, this means independent samples and independence of observations within each sample.  (Section~\ref{sec:assumptions-hyp-tests} discusses further.)
+%independent observations within a sample for a one-sample test, independent differences   ---though they still have the same independence assumptions as \(t\)-tests.
+
+
+% 
+% \begin{itemize}
+% \item
+%   One-sample
+% \item
+%   Two-sample
+% \item
+%   Paired
+% \end{itemize}
+
+
+%\hypertarget{two-sample-Wilcoxon-test}{%
+\subsubsection{Two-sample Wilcoxon test}
+%\label{two-sample-wilcoxon-test}}
+
+Perhaps the most commonly-used nonparametric test is the (two-sample) Wilcoxon rank-sum test, which checks whether two independent samples were drawn from populations with the same distributions, up to a `location shift' $\mu_0$ (shifting one distribution over horizontally by $\mu_0$). This test can be informally thought of as testing whether the samples have different medians (as opposed to means, in the two-sample \(t\)-test).
+%but it is is actually more general. For example, two samples with similar medians but different variances will be significantly different using a Wilcoxon rank-sum test.
+
+The null hypothesis for this test is that the two samples are drawn from identical population distributions (up to the location shift).  The test statistic is related to the sum of ranks of the data in sample 1, when all observations from both samples are combined and put in order.\footnote{For more detail and intuition, see e.g.,\ \citep[][\S11.2.3]{rice2006mathematical}; \citep[][\S15.4]{field2012discovering}.}
+
+% (The \href{https://en.wikipedia.org/wiki/Mann\%E2\%80\%93Whitney_U_test}{Wikipedia page} gives more detail and intuitive examples, if you're interested.)
+
+
+\subsubsection{Example}
+\label{sec:ncountstem-example}
+%Vowel duration and parametric versus non-parametric tests}
+
+For the \ttt{regularity} dataset, a variable measured was \ttt{NcountStem}, the number of words which are very close in spelling to the verb (a.k.a.\ orthographic `neighborhood density'), which may be higher for regular verbs.
+% footnote dropped for space... OK?
+%\footnote{The logic is that verbs with higher neighborhood density are more likely to become regular over time because they are more affected by analogy to other verbs in the lexicon (which are overwhelmingly regular).}
+%because they are more affected in the mental lexicon by (see Section~\ref{sec:dregdata}). for current purposes 
+We are interested in assessing whether neighborhood density does significantly differ by verb regularity.  
+% %If a verb's neighbors in the mental lexicon influence its behavior, verbs with fewer orthographic neighbors may be less likely to change over time (become regular); thus \ttt{NcountStem} could be higher for regular verbs.
+% 
+The empirical pattern is shown in Figure~\ref{fig:regularity-nd-empirical}.
+
+<<regularity-nd-empirical, echo=FALSE, out.width='55%', fig.width=default_fig.width*.55/default_out.width, fig.cap=" Distribution of orthographic neighborhood density as a function of verb regularity for the \\texttt{regularity} data, shown as a smoothed density estimate.">>=
+regularity %>% 
+  ggplot(aes(x = NcountStem)) + 
+  geom_density(aes(fill = Regularity, color = Regularity), alpha = 0.1) +
+  scale_fill_grey() + scale_colour_grey()
+@
+
+<<echo=FALSE>>=
+w_test <- wilcox.test(NcountStem ~ Regularity, data = regularity)
+@
+
+
+The distribution of \ttt{NcountStem} is right-skewed, and clearly not normal.  We therefore assess whether \ttt{NcountStem} differs by verb regularity (\ttt{Regularity}) using a Wilcoxon rank-sum test (with location shift of 0).   All variants of Wilcoxon tests are executed in R using \texttt{wilcox.test}, which automatically selects the correct Wilcoxon test depending on the arguments it is given.  In this case, the two-sample test is used:
+
+<<output.lines=2:6>>=
+wilcox.test(NcountStem ~ Regularity, data = regularity)
+@
+The result suggests that regular and irregular verbs significantly differ (at the $\alpha = 0.05$ level) in orthographic neighborhood density ($p=\Sexpr{w_test$p.value}$).
+
+%(Technically this is a two-sided test, so we should only conclude that the two distributions have different medians. As when reporting  $t$-tests, it is common to 
+%
+% \footnote{Technically, the significant rseult only shows that the distributions for \tsc{intransitive} and intrans  The alternative hypothesis refers to a ``location shift'' because the null hypothesis is actually ``the two samples are drawn from distributions differing only by shifting one over by \(\mu\)'', where \(\mu\) is a number specified in the test. By default \(\mu=0\), which makes the null hypothesis ``the two samples are drawn from identical distributions''.
+
+% XX: introduce data using: 'this exercise uses the Dutch verb \ttt{regularity} data (\texttt{regularity}) from the \texttt{languageR} package, described in more detail in Section~\ref{dregdata}. This dataset lists 700 Dutch irregular and regular verbs (the column \texttt{Regularity}), and includes variables which may help predict whether a verb is regular or not, including the verb's frequency (\texttt{WrittenFrequency}).
+% 
+% \begin{itemize}
+% \item
+%   What \texttt{Auxiliary} is used to form certain past/passive tenses (\tsc{hebben}, \tsc{zijn}, \tsc{zijnheb})
+% \item
+%   The verb's frequency (\texttt{WrittenFrequency})
+% \end{itemize}
+% 
+% Let us divide the verbs in this dataset into two types, by whether the \texttt{Auxiliary} is \tsc{hebben} or not:
+% <<>>=
+% regularity <- mutate(regularity, type=factor(ifelse(Auxiliary %in% c("zijn", "zijnheb"),"nonheb", "hebben")))
+% @
+% This division makes sense because the auxiliary ``hebben'' can be thought of as the default case. See \href{http://www.dutchgrammar.com/en/?n=verbs.au04}{here} (less technical) or ``Non-finite forms'' \href{https://en.wikipedia.org/wiki/Dutch_grammar}{here} (more technical) if interested.}
+
+% 
+% \hypertarget{example-auxiliaries}{%
+% \subsubsection*{Example: auxiliaries}\label{example-auxiliaries}}
+% \addcontentsline{toc}{subsubsection}{Example: auxiliaries}
+% 
+% We know \protect\hyperlink{shapiro-wilk-example}{from above} that the frequencies of Dutch ``hebben'' verbs are not normally distributed (i.e.,~\(p < 0.0001\) in a Shapiro-Wilk test), so it was not actually appropriate to compare their frequencies with non-``hebben'' verbs \protect\hyperlink{welch-example}{using a \(t\)-test}.
+% 
+% Let's compare the frequencies of these two verb groups again, using a Wilcoxon test:
+% 
+% <<>>=
+% wilcox.test(WrittenFrequency~type, regularity)
+% @
+% 
+% suggesting that \emph{hebben} and \emph{non-hebben} verbs have significantly different frequencies (\(p=0.002\)).\footnote{The alternative hypothesis refers to a ``location shift'' because the null hypothesis is actually ``the two samples are drawn from distributions differing only by shifting one over by \(\mu\)'', where \(\mu\) is a number specified in the test. By default \(\mu=0\), which makes the null hypothesis ``the two samples are drawn from identical distributions''.}
+
+\subsection{$t$-tests versus Wilcoxon tests}
+\label{sec:example-nonnormality}
+
+Testing differences in means is very common in practice; when should a parametric versus nonparametric method be used, and does it matter? The main difference between these methods is the assumption by a $t$-test that data is normally distributed.  Sometimes it is clear a priori that data cannot be normally distributed, for example for a rating task with upper and lower bounds.  Otherwise, you can check whether data looks normally distributed using visual or quantitative methods, provided the sample is large enough (as described below: section~\ref{sec:checking-normality}). %provided the sample is large enough. (For small samples it is impossible to check for normality.) 
+%for small samples it is impossible to tell whether data ``looks normally distributed''.
+
+
+In practice $t$-tests are relatively robust to deviations from normality (Box~\ref{box:t-test-normality}).
+%for even medium-sized samples, 
+But certain deviations from normality can strongly affect the results of $t$-tests, such as
+%The most common cases where $t$-tests are suspect are
+when one or both samples contain clear outliers, or have highly-skewed distributions---as in the example below.
+
+As such, standard advice for one's own data is just to use a non-parametric test (such as Wilcoxon rank-sum) if the data are clearly non-normal, or you cannot assess normality (small sample size).  Because Wilcoxon tests are  computed using ranks, they are robust to outliers and skewed distributions---like medians are, compared to means.\footnote{Wilcoxon tests are also invariant under monotonic transformations of the data (e.g.,\ log-transforming), while $t$-tests are not.}
+%% FUTURE: incorporate w/ exercise
+%as illustrated in Exercise~\ref{ex:invariance}}  
+
+\begin{boxedtext}{Broader context: Does normality matter for $t$-tests?} 
+\label{box:t-test-normality}
+If you have taken a statistics class, you have probably heard that $t$-tests can only be applied to normally-distributed data, so you need to check normality before applying a $t$-test. This is sensible as default advice.
+However, in practice $t$-tests are relatively robust to moderate deviations from normality---especially
+%\citep[e.g.,][]{rice2006mathematical}---
+ for larger sample size, where the central limit theorem quickly kicks in, and especially for deciding whether to reject the null hypothesis (e.g.,\ whether $p<0.05$, as opposed to determining $p$'s exact value).  
+This is useful to know both for confidence in linear regression models presented in later chapters (where $t$-tests are often used), and in reading the literature. Many papers report \(t\)-tests on (probably) non-normal observation distributions, in part because carrying out non-parametric tests was computationally difficult before the 1990s. One shouldn't immediately discount the results of \(t\)-tests for the many types of linguistic data where normality is unlikely (like Likert scores, reaction times, durations of sounds/words), or where sample size is small, but do view these results critically---especially where significances are near the \(\alpha\) cutoff.  Since $t$-tests involve comparisons of means, a good rule of thumb for assessing whether a $t$-test might be affected by a particular case of non-normality is just to ask, ``how would this non-normality affect the estimated mean?''
+
+Note that there is no magic cutoff for what `large' or `small' sample sizes are, or what a `moderate deviation' is.
+%here.
+$n=30$ is a common rule of thumb for when the central limit theorem kicks in (the $t$-distribution looks normal), but the required $n$ actually depends on the shape of the data's distribution. 
+
+See  \citet[][49--51, \S3.4.2, 10.2]{baguley2012serious}  for further discussion of these issues.
+% [][p. 49--51, but also elsewhere]
+
+\end{boxedtext}
+
+\paragraph{Example: Non-normality effects on $t$-tests versus\ Wilcoxon tests}
+
+
+<<hebben-dist, echo=FALSE, fig.asp=0.5, fig.cap="Histograms of \\ttt{WrittenFrequency} for verbs in each \\ttt{Auxiliary} class (\\tsc{hebben}, etc.), for the \\texttt{regularity} data.">>=
+
+ggplot(aes(x = WrittenFrequency, stat(density)), data = regularity) + 
+  geom_histogram() + 
+  facet_wrap(~Auxiliary) + 
+  xlab("Word frequency") + 
+  ylab("Est. probability density")
+@
+
+For the \ttt{regularity} data, Figure~\ref{fig:hebben-dist} shows the distribution of frequency for verbs in each auxiliary class.  Let's consider whether \tsc{hebben} and \tsc{zijn} verbs differ in frequency (left and center panels). The histograms suggest that \tsc{zijn} verbs have slightly higher frequency.
+% removed: scientific intuition
+% this is also what would be expected for scientific reasons.\footnote{The auxiliary \tsc{zijn} is used for `irregular' perfect tense formationan irregular closed class of verbs.  In many languages non-default verb paradigms contain higher-frequency words, which are 
+% %the intuition being that they are 
+% less likely to be `regularized' over time in language change.}
+% %\footnote{The auxiliary \tsc{hebben} can be thought of as the default for forming perfect tenses, while 
+
+
+
+<<echo=FALSE>>=
+regularity_hz <- filter(regularity, Auxiliary != "zijnheb")
+
+t_test_1 <- t.test(WrittenFrequency ~ Auxiliary, data = regularity_hz)
+w_test_1 <- wilcox.test(
+  WrittenFrequency ~ Auxiliary, 
+  conf.int = TRUE, 
+  data = regularity_hz
+  )
+@
+
+From a $t$-test (Welch's, two-sample), we would conclude that the difference in frequency is significant at the $\alpha=0.05$ level, but just barely ($p = \Sexpr{signif(t_test_1$p.value,2)}$): the 95\% confidence interval almost contains 0.
+
+<<output.lines=5:8>>=
+reg_hz <- filter(regularity, Auxiliary != "zijnheb")
+t.test(WrittenFrequency ~ Auxiliary, data = reg_hz)
+@
+
+In contrast, from a Wilcoxon rank-sum test, we would again conclude that the difference in frequency is significant at the $\alpha=0.05$ level, but with higher confidence ($p = \Sexpr{signif(w_test_1$p.value,2)}$), reflected in a 95\% confidence interval which does not contain values near 0.
+
+<<output.lines=5:8>>=
+wilcox.test(WrittenFrequency ~ Auxiliary, conf.int = TRUE, 
+            data = reg_hz)
+@
+
+
+The Wilcoxon test is more reliable here because the distribution of \ttt{WrittenFrequency} is not normal---for \tsc{hebben} verbs, there is clear right skew and some outlying points to the left of the main distribution, while for \tsc{zijn} verbs normality cannot be assessed, but assuming normality forces a high estimated variance for \tsc{zijn} verbs (and thus a lower $t$-value for the \tsc{zijn}/\tsc{hebben} differences) due to a single point with frequency near 0.
+
+If this single point is excluded as an outlier, a $t$-test gives a very different $p$-value and confidence interval:
+
+<<output.lines=5:8>>=
+reg_hz_1 <- filter(
+  regularity, 
+  Auxiliary == "hebben" | (Auxiliary == "zijn" & WrittenFrequency > 4)
+)
+t.test(WrittenFrequency ~ Auxiliary, data = reg_hz_1)
+@
+
+While the Wilcoxon test gives a similar result to the test where the outlier was not excluded (compare the $p$-values and CIs):
+<<output.lines=5:8>>=
+wilcox.test(WrittenFrequency ~ Auxiliary, conf.int = TRUE,
+            data = reg_hz_1)
+@
+
+Intuitively, the $t$-test's result is strongly affected while the Wilcoxon test's result is not because removing this point changes the difference in sample means much more than the difference in medians.
+
+
+
+
+
+
+% - For the regularity data, consider t.test comparing hebben and zijn. For theoretical reasons we know what the `right answer' probably is here: hebben frequency $>$ zijn. Also fairly clear in an empirical plot, as long as we think in terms of medians. 
+% 
+% - A t-test barely catches this pattern (p=0.05), while the Wilcoxon test does---for the same reasons that the `clear difference' in frequency in empirical data is captured by medians but not means: mean of zijn very affected by minimum val.
+% 
+% - Suppose we  exclude this point as an outlier.  the resulting t.test flips down to p=0.05---qualitatively different.
+% 
+% - If you do the same thing with Wilcoxon rank-sum test, get much more similar results, and give the result we expect from the data.
+
+
+\hypertarget{checking-normality}{%
+\subsection{Checking normality}\label{sec:checking-normality}}
+
+It is often useful to check whether data is normally distributed, for example when checking the normality assumption for \(t\)-tests, or for linear regression residuals 
+%checking assumptions made by regression models 
+(Section~\ref{sec:normality-of-errors-assumption}).  The first point to note is that `checking normality' only makes sense for a sufficiently large sample. For small samples (e.g.,\ $n<20$), no method can assess whether data `looks normal' \citep[][\S9.9]{rice2006mathematical}.
+
+%\hypertarget{visual-methods}{%
+\subsubsection{Visual methods}
+
+\paragraph{Histograms}
+The simplest method is to  examine a histogram or smoothed density estimate plot (e.g.,~Figure~\ref{fig:regularity-nd-empirical}), and eyeball whether it looks like a bell curve (= normally distributed).  For example, the distributions of \ttt{NcountStem} in Figure~\ref{fig:regularity-nd-empirical} are clearly not normal: the distributions are right-skewed compared to a bell curve.
+% 
+% <<fig.width=4, fig.height=3, warning=FALSE>>=
+% hebben <- regularity %>% filter(Auxiliary=="hebben")
+% ggplot(hebben, aes(WrittenFrequency)) +
+%   geom_histogram()
+% @
+% 
+
+Other cases are less clear. For example, in Figure~\ref{fig:hebben-dist}, the \tsc{hebben} and \tsc{zijnheb} histograms 
+%
+% which uses a new dataset: the Dutch verb \ttt{regularity} data (\texttt{regularity}) from the \texttt{languageR} package, described in more detail in Section~\ref{sec:dregdata}. This dataset lists 700 Dutch  irregular and regular verbs (the column \texttt{Regularity}), and includes variables which may help predict whether a verb is regular or not, including the verb's frequency (column \texttt{WrittenFrequency}) and which \texttt{Auxiliary} is used to form certain past/passive tenses.
+% %(levels: \tsc{hebben}, \tsc{zijn}, \tsc{zijnheb}).  
+% Figure~\ref{fig:hebben-dist} shows the distribution of frequency for verbs in each auxiliary class. %regular and irregular verbs.
+%
+%The left and right histograms (\tsc{hebben}, \tsc{zijnheb}) 
+seem slightly non-symmetric, and thus not normal. But in exactly what way are they not normal? Perhaps they are very close to normal?  For the center histogram, there is too little data to assess normality---the data could plausibly come from a normal or non-normal distribution, and if we used different histogram bin sizes the histogram's shape will change a lot. Histograms are fine for detecting gross deviations from normality, but not for understanding more subtle deviations, or for small samples.  
+
+\paragraph{Q-Q plots}
+
+A better visual method for assessing normality
+%, when sample size is sufficiently large, 
+is  a \emph{quantile-quantile plot} (or \emph{Q-Q plot}; \citealp[][\S9.4.1]{baguley2012serious}). For each observation, a Q-Q plot shows the percentile of each observation in the sample (the `sample quantile') against the quantile that would be expected from a normal distribution with the same mean and standard deviation as the sample. If the sample were normally distributed, these two things would be the same, and the plot would just show a straight \(y=x\) line. The degree of deviation from this line thus captures the non-normality of the sample, and allows us to see which data points are ``responsible'' for deviations from normality.
+
+For example, Figure~\ref{fig:hebben-qq} (left) shows a Q-Q plot for the frequency data for words with auxiliary \tsc{hebben}, with the $y=x$ line; the right panel shows a histogram of this data, with a superimposed normal distribution. The parts of the Q-Q plot which are furthest from the line correspond to parts of the histogram which deviate from a normal distribution: there is less data in the left tail (due to the cluster of points at \ttt{WrittenFrequency}=0), and more data in the right tail, than expected in a normal distribution.
+%and the right skew of the histogram.
+%and draws the $y=x$ line (Figure~\ref{fig:hebben-qq}):
+
+<<hebben-qq, echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap='Left: Q-Q plot of word frequency for words with auxiliary \\tsc{hebben} in the \\ttt{regularity} data. Right: empirical distribution of this data, with superimposed normal distribution using sample mean and SD.'>>=
+regularity_hebben <- filter(regularity, Auxiliary == "hebben")
+
+filter(regularity, Auxiliary == "hebben")  %>% 
+  ggplot(aes(sample = WrittenFrequency)) + 
+  stat_qq() + 
+  stat_qq_line() + 
+  xlab("Theoretical quantiles") + 
+  ylab("Sample quantiles")
+
+ggplot(regularity_hebben, aes(x = WrittenFrequency)) + 
+  geom_histogram(aes(y = ..density..), fill = "darkgrey") +
+  stat_function(
+    fun = dnorm, 
+    args = list(
+      mean = mean(regularity_hebben$WrittenFrequency), 
+      sd = sd(regularity_hebben$WrittenFrequency)
+    )
+  )
+@
+
+The deviations from the line correspond to parts of the histogram that make the distribution non-normal: there are fewer data in the left tail and more data in the right tail than expected in a normal distribution, and the cluster of points at \ttt{WrittenFrequency}=0 especially stand out. 
+% (These likely result from thresholding the data below some minimum frequency.)
+
+% \begin{itemize}
+% \item
+%   { \textbf{Fewer} data in left tail than expected in a normal distribution}
+% \item
+%   { \textbf{More} data in right tail than expected in a normal distribution}
+% \end{itemize}
+
+\subsubsection{Hypothesis test}
+
+Normality of a sample can also be assessed using hypothesis tests,
+such as the Shapiro-Wilk test, whose null hypothesis is that the sample is drawn from a normal distribution.  
+For example, we can use this test (\ttt{shapiro.test()})
+%via R's \ttt{shapiro.test} implementation) 
+to confirm our intuition from visual methods that \tsc{hebben} verb frequencies are not normally distributed (meaning, low $p$-value):
+<<output.lines=4:5>>=
+shapiro.test(regularity_hebben$WrittenFrequency)
+@
+However, such tests are less useful than they appear (Box~\ref{box:normality-tests}), and visual methods are in general preferable 
+%to hypothesis tests 
+for assessing normality.
+% 
+% and (2) it can't be ruled out that \tsc{zijn} verb frequencies are normally distributed (meaning $p>0.05$):
+% <<>>=
+% regularity.zijn <- filter(regularity, Auxiliary=='zijn')
+% shapiro.test(regularity.zijn$WrittenFrequency)
+% @
+
+\begin{boxedtext}{Broader context: Do normality tests tell us anything?}
+\label{box:normality-tests}
+
+Shapiro-Wilk and other hypothesis tests for assessing normality are widely used, especially to assess whether samples meet assumptions for $t$-tests or linear regression. Such tests can be useful as a companion to visual methods, or when visual methods are infeasible (for example, automatically assessing normality of hundreds of distributions). But in general these tests are less useful than they may seem, for several reasons---which point to important larger issues. (See e.g.,~\citealp[][\S9.3.5]{baguley2012serious}, as well as an excellent ongoing discussion of these issues in this post: \citealp{stackexchange_normality}.)
+
+First, any sufficiently large sample will show some deviation from normality---even when a Q-Q plot suggests the deviation is very small. (For this reason, \texttt{shapiro.test} in R only works when \(n<5000\).) This is because no real-world data is perfectly normally-distributed: nature doesn't provide such data. 
+
+%never sample with a 100\% normal distribution in practice---nature never provides perfectly normally distributed data. 
+
+Second, a non-significant result doesn't let us conclude that the data \textbf{are} normally distributed.  Non-significant hypothesis tests do not give evidence for the null hypothesis (Section~\ref{sec:p-value-misconceptions}).
+
+%(NHST tests do not ``prove the null'').
+Finally, a significant result doesn't give any information about what the (non-normal) distribution looks like.
+%which is  points to a larger issue: 
+When a statistical procedure assumes the data follow an normal distribution, the important question is not whether they are normally-distributed  (they are not), but whether the observed non-normality is of concern for applying the procedure (e.g.,\ in terms of Type I or Type II error).  For example, for $t$-tests, normality essentially does not matter for sufficiently large samples (thanks to the central limit theorem).
+\end{boxedtext}
+
+
+% 
+% It is important to be aware of these assumptions---especially independence assumptions, which do not gold for many basic questions addressable with linguistic datasets, since most linguistic data involves multiple observations per person or per linguistic object (e.g.,\ sentence), which we don't expect to be independent (see Chapter XX).  In practice you can't usually check the independence assumptions; you have to think about your data to know whether they hold, and whether your data can be transformed to satisfy them. For example, the paired $t$-test introduced above (REF XX) deals with a particular kind of violation of the independence assumption---pairs of observations are not independent---by computing pairwise differences, then carrying out a one-sample $t$-test on these values.
+
+
+% It is less clear how important the normality assumption is. If your samples are clearly not normally distributed---either by visual inspection , or for a priori reasons (e.g.,~a rating task---can't be normally distributed because of upper and lower bounds), you should use a non-parametric test instead (like Wilcoxon, discussed below). A common case in practice where \(t\) tests are suspect is when there are clear outliers in one or both samples. However, \(t\)-tests are relatively ``robust''\footnote{see e.g.,~discussion {[}here{]}(\url{https://stats.stackexchange.com/questions/121852/how-to-choose-between-t-test-or-non-parametric-test-e-g-wilcoxon-in-small-sampl} , or \citet{bland2015introduction} p.~168.} to non-normally-distributed samples, and \textbf{many} papers especially in older literature report \(t\)-tests on (probably) non-normal observation distributions, in part because carrying out non-parametric tests was computationally difficult before the 1990s. One shouldn't immediately discount the results of \(t\)-tests for the many types of linguistic data where normality is unlikely (like Likert scores, reaction times, durations of sounds/words), or where sample size is small, but do view these results critically---especially where significances are near the \(\alpha\) cutoff.
+
+% FUTURE: redo this section? especially to work in sample size: in practice if $n$ small enough t-tests are unreliable, you can'tcheck normality anyway (Rice p. 428)/
+
+
+% \hypertarget{paired-t-test}{%
+% \subsection{\texorpdfstring{Paired \(t\)-test}{Paired t-test}}\label{paired-t-test}}
+% 
+% A useful variant of the \(t\)-test, which deals with a particular violation of the independence assumption, is for \emph{paired} data, where the two samples consist of pairs of observations (A and B), and the difference between A and B is of interest.
+% 
+% For example:
+% 
+% \begin{itemize}
+% \item
+%   For the \texttt{tapping} data: ``tapping rate in intransitive items'' and ``tapping rate in transitive items'' for the \(i\)th participant.
+% 
+%   \begin{itemize}
+%   \tightlist
+%   \item
+%     Can be used to ask: ``does tapping rate differ by-participant between transitive and intransitive items?''
+%   \end{itemize}
+% \item
+%   For the \protect\hyperlink{transitionsdata}{\texttt{transitions} data}:
+% 
+%   \begin{itemize}
+%   \item
+%     ``Mean transition duration during the first minute''``, and''mean transition duration after the first minute", for each conversation
+%   \item
+%     Can be used to ask: ``do floor transition times differ between the first minute of a conversation and the rest of the conversation?''"
+%   \end{itemize}
+% \end{itemize}
+% 
+% The \emph{paired \(t\)-test}, essentially a one-sample \(t\)-test on pairwise differences between observations, is appropriate for this type of data.
+
+% ---
+% 
+% Two important consequences of this rank-based test statistic are:
+% \begin{itemize}
+% \item Wilcoxon tests are robust to outliers and skewed distributions---like medians are. (NOW DONE)
+% \item Wilcoxon tests are robust to monotonic transformations of the data---for example, log-transforming each sample won't change the result of a test. (NOT DONE)
+% \end{itemize}
+% 
+% In contrast, the result of a $t$-tests can be very affected by outliers/skew or data transformations, as illustrated in XX
+
+
+% 
+% the important question is always ``Is the particular way in which this data is  distribution for a particular statistical method which assumes X-distributed data  whether a me that the  is important for actually deciding what consequence non-normality has for the statistical method we're applying. (XX ref to example above, with outliers vs skew.)
+
+%Thus, visual methods are preferable to hypothesis tests for assessing normality.
+
+%
+
+% This test is less useful than it may seem, because:
+% 
+% \begin{itemize}
+% \item
+%   \textbf{Any} sufficiently large sample will show some deviation from normality---even when a Q-Q plot suggests the distribution is very close to normal.
+% 
+%   \begin{itemize}
+%   \item
+%     We are never drawing data from a 100\% normal distribution, in practice.
+%   \item
+%     For this reason, \texttt{shapiro.test} in R only works when \(n<5000\).
+%   \item
+%     See discussion \href{https://stats.stackexchange.com/questions/2492/is-normality-testing-essentially-useless}{here}.
+%   \end{itemize}
+% \item
+%   A non-significant result does not let us conclude that the sample \textbf{is} drawn from a normal distribution.
+% \item
+%   A significant result doesn't say anything about what the (non-normal) distribution looks like.
+% \end{itemize}
+% 
+% For these reasons, visual methods are preferable to the Shapiro-Wilk test for assessing normality.
+
+
+% \subsection{Other parametric tests}
+% 
+% % \(z\)-tests and \(t\)-tests are called \emph{parametric} hypothesis tests, because it is assumed that the sample is drawn from a distribution with a particular ``functional form''---an equation characterized by a few parameters, like a normal distribution (\(\mu\), \(\sigma\), \(n\)) or a binomial distribution (\(p\), \(n\)). For example, a two-sample \(t\)-test assumes that the samples are normally distributed with means \(\mu_1\) and \(\mu_2\), and variances \(\sigma_1\) and \(\sigma_2\)---these are the parameters, which are referred to in the null (\(\mu_1 = \mu_2\)) and alternative ($
+% % \mu_1 \neq \mu_2$) hypotheses.
+% 
+% 
+% Some other parametric tests in common use:
+% 
+% \begin{itemize}
+% \item
+%   The \href{https://en.wikipedia.org/wiki/F-test_of_equality_of_variances}{\(F\)-test} of the equality of \textbf{variance} between two samples
+% 
+%   \begin{itemize}
+%   \item
+%     R: \texttt{var.test}
+%   \item
+%     \(F\) tests arise frequently in ANOVA analyses
+%   \end{itemize}
+% \item
+%   The \href{http://www.r-tutor.com/elementary-statistics/inference-about-two-populations/comparison-two-population-proportions}{proportion test} to compare the probability of success in two groups
+% 
+%   \begin{itemize}
+%   \item
+%     R: \texttt{prop.test}
+%   \item
+%     Ex: compare the rate of tapping for ``transitive'' and ``intransitive'' sentences (\texttt{tapping} data)
+%   \end{itemize}
+% \item
+%   Pearson's \href{https://en.wikipedia.org/wiki/Pearson\%27s_chi-squared_test}{chi-squared test}, which can be used to test the independence of two categorical variables (see the \protect\hyperlink{cda}{Categorical Data Analysis chapter})
+% 
+%   \begin{itemize}
+%   \item
+%     R: \texttt{chisq.test}
+%   \item
+%     Ex: assess whether tapping depends on syntactic boundary in the \texttt{tapped} dataset (test whether \texttt{syntax} and \texttt{tapped} are independent)
+%   \end{itemize}
+% \end{itemize}
+
+
+\section{Common misconceptions about $p$-values}
+
+\label{sec:p-value-misconceptions}
+
+Perhaps the most important issue with NHST is $p$-values, which are widely reported but notoriously difficult to interpret correctly, resulting in widespread misconceptions among researchers \citep[][list 25]{greenland2016statistical}. For example, \citet{nieuwenhuis2011erroneous} found that 50\% of a sample of neuroscience articles made error 4 below, and \citet{haller2002misinterpretations}  found that 1/3 of a sample of psychology academic staff \textbf{who taught statistics} believed a statement similar to error 1.
+%% source: Cummings book, p. 26
+%\underline33\% \citet[][81]{oakes1986statistical} found that 45\% of a sample of academic psychologists believed error 1.
+%f around 1/3 of psychology professors and students believe error 1 (REF Kline 2012 p 96). 
+Language scientists are probably no better.  Every researcher who reports $p$-values should be aware of common misinterpretations, and reading more is highly recommended (see Section~\ref{sec:other-reading-ch2}).  
+
+These are four true statements which address misconceptions,
+%four misconceptions,
+listed by \citet{vasishth2016statistical} and \citet[][\S10.1]{winter2019statistics}, which seem most common in language sciences and most consequential for interpreting results:
+\begin{enumerate}
+\item  $p$-values are not the probability the null hypothesis is true---in particular, a ``non-significant'' finding (e.g.,\ $p>0.05$) says nothing about whether the null hypothesis holds.
+
+\item $p$-values do not measure strength of an effect. (This is `effect size', introduced in the next chapter.)
+
+\item A smaller $p$-value does not mean greater confidence in our specific alternative hypothesis. (It only means greater confidence the null hypothesis is false.) It also does not mean the alternative hypothesis is true in reality. It just means that if we followed the NHST procedure, across many studies, we'd incorrectly reject the null with 0.05 probability.
+
+\item Significant and non-significant effects of $X$ in two conditions of a study does not mean the conditions significantly differ in the effect of $X$. (For this we need a hypothesis test for the difference in the effect between the two conditions---an `interaction': Section~\ref{sec:lr-interactions}.)
+\end{enumerate}
+
+Some of these misconceptions in practice:
+\begin{itemize}
+\item 1: ``A two-sample $t$-test showed that male and female speakers do not differ in speech rate ($t(10) = 1.5$, $df = 9$, $p>0.05$).''   (Correct: ``found no evidence that...'' or ``do not significantly differ...'')
+\item 3: ``The noun/verb difference in reaction times was highly significant ($p<0.001$; nouns mean RT = 400 msec, verbs mean RT = 300 msec), suggesting that nouns have longer reaction times.''   (Correct: ``Nouns (mean = 400 msec) have longer reaction time than verbs (mean RT = 300 msec), and this difference was significant...'')
+\item 2, 4: ``The effect of speaker age differed between conditions:  age had a strong effect in condition A ($p=0.01$) but only a weak effect in condition B ($p= 0.06$).''  (Correct: a test of the \tsc{age}:\tsc{condition} interaction would be needed, and the $p$-value says nothing about effect size.)
+%to assess the null hypothesis that the effect of age is the same in Condition A and Condition B.)
+\end{itemize}
+
+%% FUTURE: make all these quotes from my own published work?
+
+These kinds of errors should be avoided when writing up results, even if you know what you mean but are being brief. For example, ``A and B are the same'' is often used in papers as shorthand for ``A and B are not significantly different [by some hypothesis test]''. But even if the author knows what was meant, many readers will not.   Most misconceptions involve ``wishful thinking about things that researchers really want to know'' \citep[][103]{kline2013beyond}, making it easy to read the conclusion one wants (e.g.,\ this non-significant finding supports the null hypothesis) into imprecise language.
+
+
+\section{Reporting hypothesis tests}
+\label{sec:reporting-hypothesis-tests}
+
+The most commonly-used format for reporting statistical findings is ``APA style'', as described in the American Psychological Association's publication manual (7th edition) \citep{apa7th}, especially the journal article reporting standards for quantitative research in Chapter 3 (JARS-Quant), which are  freely available online.\footnote{At \url{https://apastyle.apa.org/jars/quantitative}, including a useful three-page summary PDF, summarizing the full article by \citet{appelbaum2018journal}.}
+%and more succinctly in a paper by the APA's statistics task force \citep{wilkinson1999statistical}.  
+APA style prescribes particular notation for reporting numbers and statistical analyses, which we mostly follow in this book,
+%(e.g.,\ ``mean value'' is written $M$), 
+but you can look up as needed.  The more important part of APA style is not exactly what numbers you report, but \textbf{why}. One important principle is:
+\begin{quote}
+When reporting the results of inferential statistical tests or when providing estimates of parameters or effect sizes, include sufficient information to help the reader fully understand the analyses conducted and possible alternative explanations for the outcomes of those analyses. \citep[][\S3.7]{apa7th}
+\end{quote}
+
+Such principles help bridge the gap between what the APA Manual actually recommends (extensive reporting) and common practice (less verbose).  In this book we try to distill the recommendations and give multiple possibilities for statistical reporting.
+
+\subsection{Parts of a report}
+
+When reporting a hypothesis test, you must report minimally (APA Manual \S3.7):
+\begin{enumerate}
+\item The observed value of the \textbf{test statistic}
+\item Its \textbf{degrees of freedom}
+\item The exact \textbf{p-value}: probability of getting a value of the test statistic at least as extreme as the value observed, under the null hypothesis
+\item The \textbf{effect size}, including magnitude and direction
+\end{enumerate}
+The significance level $\alpha$ must also be given, but it should have already have been fixed and reported in your writeup; we assume $\alpha = 0.05$ here.  It is conventional to abbreviate any $p$-value below a very small value (often 0.001) as (e.g.,) $p < 0.001$ because there is no practical difference between very small $p$-values \citep[][341]{greenland2016statistical}.
+%(CITE Greenland et al 2016 341)
+
+All of (1)-(4) are needed to interpret a reported effect.  Without any of (1)--(3) we don't know how confident we should be in the result, versus the null hypothesis. Without (4) we don't know how large the effect is, which is arguably as important as `significance'.  
+% removed on michaela advice, 11/21 -- already said above that ES will be discussed in next chapter.
+%
+%Effect size and its importance are discussed in the next chapter. 
+%For now, note that a difference in means is a reasonable effect size to report if the units are on an interpretable scale (e.g.,\ seconds, number of words).  
+%So
+A `minimal' report for the $t$-test in Section~\ref{sec:welch-example} which covers (1)--(4) would be:
+\begin{quote}
+Transitions to male speakers were longer than transitions to female speakers by
+\Sexpr{trans_tt$estimate[2] - trans_tt$estimate[1]} msec, and the difference was significant ($t(\Sexpr{trans_tt$parameter}) = \Sexpr{trans_tt$statistic}$,  \Sexpr{formatP(trans_tt$p.value)}).
+\end{quote}
+
+It is also recommended to give:
+\begin{enumerate}
+\item[5.] Basic \textbf{descriptive statistics} corresponding to the hypothesis test (e.g., mean and standard deviation of each group, for two-sample $t$-tests).
+\item[6.] A \textbf{measure of variability} for any reported point estimate (e.g.,\ a standard error for each reported group mean).
+\item[7.] \textbf{Confidence intervals} for any parameter estimate; these are especially useful because they provide information on both precision and location.  
+\end{enumerate}
+
+Descriptive statistics help convey effect size, and allow the interested reader to construct a mental image of the distribution of the empirical data (and thus ``possible alternative explanations...'').  From this perspective it is also ideal to include:
+\begin{enumerate}
+\item[8.] A \textbf{plot} showing the distribution of the data (like Figure~\ref{fig:transitions-sexb}).
+\end{enumerate}
+%(8) include a plot showing the distribution of the data (like Figure~\ref{fig:transitions-sexb}),
+%in XX above), 
+However, (8)  is not always possible when writing results up due to space limitations.  
+
+%\footnote{It is actually more important to give descriptive statistics than to show a plot, so you findings can be useful for future meta-analyses or power analyses}
+
+With (1)--(8) in mind, a `medium' report of the $t$-test above could be:
+\begin{quote}
+On average, transitions to male speakers ($M = \Sexpr{trans_tt$estimate[2]}$, $SE = \Sexpr{se_tt['M','SE']}$) were longer than transitions to female speakers ($M = \Sexpr{trans_tt$estimate[1]}$, $SE = \Sexpr{se_tt['F','SE']}$).  The difference (\Sexpr{trans_tt$estimate[2] - trans_tt$estimate[1]} msec) was significant ($t(\Sexpr{trans_tt$parameter}) = \Sexpr{trans_tt$statistic}$, \Sexpr{formatP(trans_tt$p.value)}).
+\end{quote}
+
+A `maximal' report of the same result could be:
+\begin{quote}
+On average, transitions to male speakers ($M = \Sexpr{trans_tt$estimate[2]}$, $s = \Sexpr{se_tt['M','s']}$, $SE = \Sexpr{se_tt['M','SE']}$)  were longer than transitions to female speakers ($M = \Sexpr{trans_tt$estimate[2]}$, $s = \Sexpr{se_tt['F','s']}$, $SE = \Sexpr{se_tt['F','SE']}$); the empirical distribution of transition durations is shown in Figure~\ref{fig:transitions-sexb}.  The difference (\Sexpr{trans_tt$estimate[2] - trans_tt$estimate[1]} msec) was significant ($t(\Sexpr{trans_tt$parameter}) = \Sexpr{trans_tt$statistic}$, \Sexpr{formatP(trans_tt$p.value)}, 95\% CI $[\Sexpr{ci_tt[1]}, \Sexpr{ci_tt[2]}]$) at the pre-specified $\alpha=0.05$ level, by a two-sided Welch $t$-test.
+\end{quote}
+
+\subsection{Context}
+
+Reporting all this information in text leads to lengthy and unreadable prose, especially if many tests are reported. It is often better to report hypothesis tests (and descriptive statistics, etc.) in tables, and just highlight relevant aspects in the text.
+
+Whether in tables or the text, reporting (1)--(8) for every hypothesis test in a paper (or every row of a regression table) would be overkill.  What is most important is to give the reader ``sufficient information'' to understand effects of {primary interest} in the research being reported.  For example, in a paper on how properties of speakers (e.g.,\ gender, age) affect turn-taking dynamics, you'd report more information for the $t$-test above, but less for a Shapiro-Wilk test assessing whether the data is normally-distributed enough to apply this $t$-test.
+
+\begin{boxedtext}{Practical note: Reporting guidelines, reality, and reproducibility}
+The temptation when writing up results is to just search ``APA Style'' online or look in published papers in your area, which will give you many examples of ``how to write up a $t$-test'' and so on. 
+%Don't do this!  
+Unfortunately, many of these examples violate at least one core recommendation of the APA Manual, and often recommendations from the American Statistical Association \citep[ASA:][]{wasserstein2016asa,wasserstein2019moving}  as well. (The same holds for reporting regression models.) The APA and ASA guidelines are excellent reads---but contain sometimes contradictory recommendations,  an overwhelming degree of detail, and many qualified statements (``confidence intervals are strongly recommended''). 
+%rather than strong \textbf{do} and  statements. 
+Even  the distillation into
+recommendations (1)--(8) in the text is unrealistic to follow in many cases. 
+What is a researcher to do who wants to report their findings in a correct yet readable format?
+%correctly, yet rea while writing readable papers of reasonable length? 
+
+As in so many aspects of statistics, there is no fixed correct practice, just general principles, and what makes sense to do depends on the particular data and analysis being reported.  But we can highlight some common
+%there are many common 
+incorrect and correct practices
+%(\textbf{don't}s) and correct practices (\textbf{do}'s), 
+which illustrate these principles, 
+and which you can adopt immediately to improve your statistical reporting.
+
+\textbf{Don't}:
+\begin{itemize}
+\item Report a hypothesis test ((1)--(3)) without an associated effect size (4) for an effect of primary interest: this omits important information for the reader to judge the effect's importance.
+\item Report a $p$-value alone (just (3)): this collapses independent dimensions of uncertainty (conveyed by the test statistic and its degrees of freedom) into a single number.
+\item Report just whether the $p$-value is above or below a threshold (e.g.,\ ``$p<0.05$''): this loses even more information about the result, and encourages dichotomous thinking about results as important/not---which is highly problematic, especially when based just on a $p$-value without an effect size.
+\end{itemize}
+
+% Tried to condense this box, on Michaela advice - 11/21
+% For example,  the first `don't' here (reporting just (1)--(3)) for the $t$-test reported in the text would be:
+% \begin{quote}
+% Transitions to male speakers were longer than transitions to female speakers, and the difference was significant ($t(\Sexpr{trans_tt$parameter}) = \Sexpr{trans_tt$statistic}$,  $p= \Sexpr{trans_tt$p.value}$).
+% \end{quote}
+% Compared to the `medium version' given in the text and a plot of the empirical data, this report omits a crucial aspect of the result: even though transitions to male and female speakers significantly differ in duration, the between-group difference is very small in comparison to within-group variation. 
+% 
+% In practice, the no-effect-size style is extremely common, and it is still uncommon to consistently include effect sizes in papers (including in my own published work). 
+
+%Here are some practical \textbf{do's} to make your statistical reporting better, right now:
+\textbf{Do:}
+\begin{itemize}
+\item  Always report effect size and variability in estimates (points 4, 6) for effects of primary interest---or at least give the information from which an interested reader can reconstruct these things. 
+\item Always report exact $p$-values (abbreviating small enough $p$-values as desired: ``$p<0.001$''), for all effects.
+\item Make your analysis as replicable as possible, so another researcher can simply look up any detail not reported in the text.  Always post your analysis code publicly, and whenever (ethically/socially) possible post the raw data.  Even if your code is messy, or if you can only post a small and/or anonymous subset of the data (so at least your code runs).
+\end{itemize}
+
+The last point relates to the more general ideals of open and reproducible research, which most language scientists (including myself) don't currently meet in our work. We should aspire to improve, to avoid a `replication crisis' of our own \citep[][\S2.10]{winter2019statistics}.
+%As \citet[][62]{winter2019statistics} puts it, as part of an excellent discussion of reproducible research practices for language sciences, ``Linguistics doesn’t have a replication crisis yet, but it's basically just looming around the corner.'' 
+
+
+% 
+% 
+% 
+% The short answer is that 
+% %it is impossible to learn general rules that work for all statistical reporting, but it is possible to know general principles behind what information should be reported, and why. 
+% 
+% Don’ts :
+% * In practice: very (very) common to just report (1)-(3), especially in older literature; often with descriptive stats.  Don’t do this. At absolute minimum need to give reader enough info to construct (4) themselves (e.g., condition means).
+
+\end{boxedtext}
+
+
+
+
+
+
+
+
+
+% Googling ``APA style'' will give you many examples of ``how to write up a $t$-test'' and so on, but many of them do not actually  but the APA manual is actually clear that the general principles it lays out are more important than a checklist of what to report.  The most important principle is:
+
+
+
+
+% * Also ideal to give basic descriptive statistics — e.g., means. And when you give any point estimate (sample mean, or regression coefficient), need to give an associated measure of variability (e.g., standard error).
+% * It’s also recommended to give confidence intervals (for any parameter estimate, difference in means, effect size) — they combine location and precision info.  (in principle can use instead of p-value.)   "Interval estimates should be given for any effect sizes involving principal outcomes"
+% 
+% 
+% 
+% 
+% 
+% When reporting a hypothesis test's results in a paper, you include at least
+% 
+% \begin{itemize}
+% \item
+%   Test statistic value
+% \item
+%   Any important parameter values (for \(t\)-test: degrees of freedom)
+% \item
+%   The \(p\)-value
+% \end{itemize}
+% 
+% which are all needed to interpret your result.
+% 
+% It is also recommended to include appropriate descriptive statistics (for two-sample \(t\)-test: mean and SD of each group) when possible; this gives a sense of effect size, which is arguably as important as significance. Even better is to include a plot showing the relevant aspects of the data (like the histogram \protect\hyperlink{two-sample-t-test}{above}, for a two-sample \(t\)-test), but this is not always possible when writing up results due to space limitations.
+% 
+% The most commonly-used format for reporting statistics is ``APA style'', described various places online (e.g.,~\href{http://my.ilstu.edu/~jhkahn/apastats.html}{here}) without purchasing the APA style guide.
+% 
+% For example, one could report the two-sample \(t\)-test result above as:
+% 
+% \begin{quote}
+% Verb frequencies differ significantly by type (\(t(180)=-2.67\), \(p=0.0083\)), with non-hebben verbs having higher frequency (mean=7.0, D=1.9) than hebben verbs (mean=6.5, SD=1.9).
+% \end{quote}
+% 
+% Note how including the second clause, instead of the (more common format):
+% 
+% \begin{quote}
+% Verb frequencies differ significantly by type (\(t(180)=-2.67\), \(p=0.0083\)), with non-hebben verbs having higher frequency than hebben verbs.
+% \end{quote}
+% 
+% describes a crucial aspect of the result: even though the two verb groups differ significantly in frequency, the size of this between-group difference is very small in comparison to the \textbf{within-group} variation in frequency.
+
+% \paragraph{Example: reporting a Wilcoxon test}
+% 
+% \paragraph{Non-parametric tests}
+% %\hypertarget{non-parametric-tests}{%
+% %\section{Non-parametric tests}\label{non-parametric-tests}}
+% 
+% To report this result in a paper, you would use the \textbf{median} as a descriptive statistic:
+% 
+% \begin{quote}
+% Verb frequencies differ significantly by type (Wilcoxon rank-sum: \(W=29315\), \(p=0.0024\)), with non-hebben verbs having higher frequency (median=6.9) than hebben verbs (median=6.4).
+% \end{quote}
+% 
+% You would also want to be sure to convey the amount of within-group variation, either by reporting a non-parametric measure of dispersion for each group (such as interquartile range) or including a visualization such as this density plot:
+% 
+% <<fig.height=3, fig.width=5>>=
+% regularity %>% ggplot(aes(WrittenFrequency, fill=type)) +
+%   geom_density(alpha=0.5)
+% @
+
+
+
+
+\hypertarget{other-reading-1}{%
+\section{Other reading}\label{sec:other-reading-ch2}}
+
+Sampling, uncertainty, point estimation, interval estimation, and hypothesis testing are core topics covered in many statistics textbooks, often using R examples, which have been cited in passing in this chapter  (e.g.,\ \citealp[][chap.~3]{kline2013beyond}; \citealp{baguley2012serious,field2012discovering,crawley2015statistics,NavarroOnline}), as well as every book for language scientists in particular (listed in preface); \citep[][chap.~1]{gries2021statistics} is particularly extensive.
+%\citep[e.g.,][]{gries2021statistics,winter2019statistics,baayen2008analyzing,johnson2008quantitative,levshina2015linguistics,vasishth2011foundations,desagulier2017corpus}. 
+\citet{vasishth2016statistical} is an introductory article for linguists. 
+%(CITE:  Gries, Winter, Baayen, Desaguliers, Johnson, Vasishth).  
+%\citet[][chap.~3]{kline2013beyond} is particularly succinct, and \citet[][]{rice2006mathematical} gives a mathematical treatment (but neither use R).
+
+
+On issues with $p$-values and  NHST generally, there is a vast literature, distilled and summarized by
+%some sources I have found helpful:
+%Sources I have found helpful (which distill and summarize) are 
+\citet{cumming2012understanding}, \citet{greenland2016statistical}, \citet{wasserstein2016asa};  I found \citet[][]{kline2013beyond} especially helpful.
+%\citet{apa1999guidelines}, 
+%\citet[][chap.~3]{apa7th}.
+%I found
+%\citet{mcelreath2015statistical},
+ %. 
+ \citet{vasishth2016statistical,nicenboim2016statistical} and \citet[][chap.~9--10]{winter2019statistics} discuss using  linguistic data.
+ %in particular.
+%On misconceptions about $p$-values in particular,  \citet{kline2013beyond} balances comprehensiveness with accessibility.
+
+
+% Hypothesis testing is covered in detail with R examples in many textbooks, including those for general audiences, e.g.,
+% 
+% \begin{itemize}
+% \item
+%   \citet{dalgaard2008introductory}: Ch. 3 \& 5
+% \item
+%   \citet{crawley2015statistics}: Ch. 5-6
+% \end{itemize}
+% 
+% and sources for language scientists/psychologists, such as:
+% 
+% \begin{itemize}
+% \item
+%   \citet{vasishth2016statistical}
+% \item
+%   \citet{NavarroOnline}: Ch. 10-11.6
+% \item
+%   \citet{vasishth2014introduction}: Ch. 2
+% \end{itemize}
+% 
+% Copied from former sample/population chapter:
+% \begin{itemize}
+% \item
+%   \citet{dalgaard2008introductory}: Ch. 3
+% \item
+%   \citet{crawley2015statistics}: Ch. 1, 4, 5
+% \end{itemize}
+% 
+% and some specialized for language scientists/psychologists, such as:
+% 
+% \begin{itemize}
+% \item
+%   \citet{vasishth2016statistical}
+% \item
+%   \citet{NavarroOnline}: Ch. 10
+% \item
+%   \citet{vasishth2014introduction}: Ch. 2
+% \end{itemize}
+
+\begin{exercises}
+
+
+% \begin{quote}
+% \textbf{Question}
+% 
+% \begin{itemize}
+% \tightlist
+% \item
+%   Why is this, intuitively?
+% \end{itemize}
+% \end{quote}
+
+
+\exer{Consider an imaginary dataset of measurements where participants say ``hi'' every time they hear a beep, and we measure the latency between the beep and the beginning of ``hi''. There are 100 participants, each of whom is measured once. The sample mean and standard deviation are $\hat{\mu} = 200$ msec and  $s = 75$ msec.}
+\label{ex:standard-error}
+
+\subexer{What is the (estimated) standard error of the sample mean?}
+
+\subexer{Suppose we wanted to repeat this experiment, aiming to get a more precise estimate, with standard error of 2.5 msec. Based on your answer to (a), how many  participants do you think we should use in this replication?}
+
+\subexer{What assumption(s) underlie the calculation in (b)?}
+
+
+\exer{For the Dutch verb \ttt{regularity} data, make this plot showing the  distribution of word frequency for each of the three \texttt{Auxiliary} values:}
+<<eval=FALSE>>=
+ggplot(regularity, aes(x = Auxiliary, y = WrittenFrequency)) +
+  geom_boxplot() +
+  geom_point(position = "jitter", size = 0.75, alpha = 0.25)
+@
+
+In this exercise you carry out hypothesis tests to assess the difference between each pair of auxiliaries.
+
+%As discussed in the text, the \ttt{WrittenFrequency} data aren't normally distributed, so you should use a non-parametric test (here, Wilcoxon) rather than a $t$-test.
+
+\subexer{Carry out two-sample Wilcoxon tests to assess whether \tsc{hebben} and \tsc{zijn} verbs differ in frequency, and similarly for \tsc{hebben}/\tsc{zijnheb} and \tsc{zijnheb}/\tsc{zijn}.  Does it matter whether a Wilcoxson test or $t$-test is used?}
+
+\subexer{Write up the results of these tests in a few sentences, as you would in a paper.}
+
+\subexer{In the plot you should see 
+%Figure~\ref{fig:regularity-empirical}, we can see 
+that the difference in sample means is \textbf{larger} for the \tsc{zijn}/\tsc{hebben} comparison than for the \tsc{zijn}/\tsc{zijnheb} comparison. However, you should have found that the $p$-value is higher for the  \tsc{zijn}/\tsc{hebben} comparison---suggesting we can be less confident in rejecting the null hypothesis.  Explain what is going on---how can one difference in means be larger than another, yet also be less clearly different from 0?}
+
+
+% \begin{itemize}
+% \item
+%   What \texttt{Auxiliary} is used to form certain past/passive tenses (\tsc{hebben}, \tsc{zijn}, \tsc{zijnheb})
+% \item
+%   The verb's frequency (\texttt{WrittenFrequency})
+% \end{itemize}
+% 
+% The mean (log) frequency for \tsc{hebben} verbs (those where the auxiliary ``hebben'' is used) is:
+% 
+% <<warning=FALSE>>=
+% d <- regularity %>% filter(Auxiliary == "hebben")
+% mean(d$WrittenFrequency)
+% @
+
+%  exercise: 
+% - Make plot XX, which shows the empirical pattern in the data.
+% 
+% - Carry out two-sample t-tests for each pair of auxiliaries (commented out).
+% 
+% - Note that the \(p\) value is \textbf{higher} for the \emph{zijn}/\emph{hebben} comparison (less confident we can reject the null hypothesis) than for the \emph{zijn}/\emph{zijnheb} comparison, even though the difference in \textbf{sample means} is larger for \emph{zijn}/\emph{hebben}---as shown in Fig XX.  Why is this?
+
+%% nice plot which we just said to make instead of including in text
+% <<regularity-empirical, echo=FALSE, fig.cap="Distribution of verb frequency as a function of auxiliary verb for the \\texttt{regularity} data, summarized using boxplots.">>=
+% ggplot(regularity, aes(x=Auxiliary, y=WrittenFrequency)) +
+%   geom_boxplot() +
+%   geom_point(position="jitter", size=0.75, alpha=0.25)
+% @
+
+
+
+% 
+% 
+% Suppose for this example that we knew that this is the \textbf{true mean}---the population value.
+% 
+% For other verbs:
+% 
+% \begin{itemize}
+% \item
+%   \texttt{Auxiliary} = \emph{zijn} (those where the auxiliary ``zijn'' is used): mean frequency is
+% 
+% <<warning=FALSE>>=
+%     d <- regularity %>% filter(Auxiliary == "zijn")
+%     mean(d$WrittenFrequency)
+% @
+% 
+% 
+% \item
+%   \texttt{Auxiliary} = \emph{zijnheb} (those where either ``zijn'' or ``hebben'' can be used as auxiliaries): mean frequency is
+% 
+% <<warning=FALSE>>=
+%     d <- regularity %>% filter(Auxiliary == "zijnheb")
+%     mean(d$WrittenFrequency)
+% @
+% 
+% \end{itemize}
+% 
+% 
+% These mean values suggest that both \emph{zijn} and \emph{zijnheb} verbs have higher frequency on average than \emph{hebben} verbs---with \emph{zijn} verbs having the highest frequency---but we need to conduct hypothesis tests to conclude that these differences are statistically significant.
+% 
+% First, let's test whether \emph{zijn} verbs have significantly different frequency from \emph{hebben} verbs (with \(\alpha = 0.05\)). In this case the null hypothesis is ``\emph{zijn} verbs have mean frequency = 6.494'', and we carry out a one-sample \(t\)-test (two-sided):
+% 
+% <<>>=
+% d <- regularity %>% filter(Auxiliary == "zijn")
+% 
+% t.test(d$WrittenFrequency, mu = 6.494)
+% @
+% 
+% 
+% Which suggests we can reject the null hypothesis (\(p = 0.046\)): \emph{zijn} verbs have different frequencies from \emph{hebben} verbs.\footnote{Note that we cannot technically conclude that \emph{zijn} verbs have \textbf{higher} frequencies, because we carried out a two-sided test.}
+% 
+% To do the same test for \emph{zijnheb} verbs:
+% <<>>=
+% d <- regularity %>% filter(Auxiliary == "zijnheb")
+% 
+% t.test(d$WrittenFrequency, mu = 6.494)
+% @
+% 
+% Which suggests that \emph{zijnheb} verbs have different frequencies from \emph{hebben} verbs (\(p=0.034\)).
+% 
+% Note that the \(p\) value is \textbf{higher} for the \emph{zijn}/\emph{hebben} comparison (less confident we can reject the null hypothesis) than for the \emph{zijn}/\emph{zijnheb} comparison, even though the difference in \textbf{sample means} is larger for \emph{zijn}/\emph{hebben}---as shown in the boxplot below.
+% 
+% \begin{itemize}
+% \tightlist
+% \item
+%   What is the standard error of the sample mean?
+% \end{itemize}
+% 
+% %\begin{verbatim}
+% (Hint: SE = $\frac{s}{\sqrt{n}}$)
+% %\end{verbatim}
+% 
+% \begin{itemize}
+% \item
+%   How many participants would we need in total to reduce the standard error by a factor of 2?
+% 
+%   \begin{enumerate}
+%   \def\labelenumi{\alph{enumi}.}
+%   \item
+%     200 participants
+%   \item
+%     400 participants
+%   \item
+%     1000 participants
+%   \end{enumerate}
+% \end{itemize}
+% 
+% 
+% 
+
+
+%% FUTURE: add any of this back? I forget what the point was / if it's in text
+% As an example, let's divide the \ttt{regularity} data up into two ``types'', by whether the \texttt{Auxiliary} is \emph{hebben} or not:\footnote{This division makes sense because the auxiliary ``hebben'' can be thought of as the default case. See \href{http://www.dutchgrammar.com/en/?n=verbs.au04}{here} (less technical) or ``Non-finite forms'' \href{https://en.wikipedia.org/wiki/Dutch_grammar}{here} (more technical) if interested.}
+% 
+% 
+% <<>>=
+% regularity <- mutate(regularity, type=factor(ifelse(Auxiliary %in% c("zijn", "zijnheb"),"nonheb", "hebben")))
+% @
+% 
+% 
+% The two verb classes seem to have similar frequencies:
+% 
+% <<>>=
+% ggplot(aes(x=WrittenFrequency), data=regularity) + geom_density(aes(fill=type), alpha=0.5)
+% @
+% 
+% <<>>=
+% regularity %>% group_by(type) %>% summarise(mean=mean(WrittenFrequency))
+% @
+% 
+% 
+% but \emph{hebben} verbs may have lower frequencies on average. A two-sample \(t\)-test lets us test whether this difference is significant.
+
+
+%- Exercise idea:   "... for working with $t$-distributions (which computes how much probability lies below a certain probability level, here 97.5\%)."
+
+\exer{We skipped a couple steps in the explanation of this code used in the text to compute 95\% confidence intervals:}
+<<eval=FALSE>>=
+mutate(ciUpper = qt(1 - alpha / 2, n))
+@
+
+\subexer{The \ttt{qt()} command computes a 97.5\% `quantile'. Explain what the value returned by \ttt{qt()} means, intuitively.}
+
+\subexer{Why do we compute the 97.5\% quantile, rather than the 95\% quantile---given that this code is part of constructing a \textbf{95\%} confidence interval?}
+
+\exer{Carry out a paired $t$-test for the example mentioned in Section~\ref{sec:paired-t-tests} using the \ttt{transitions} data. \label{ex:paired-t-test}}
+
+
+\subexer{First, set up a dataframe showing the mean transition duration (\ttt{dur}) before and after the first minute, for each conversation:} 
+<<>>=
+d <- transitions %>% 
+  group_by(file) %>%
+  summarise(
+    # 60000 msec = 1 minute 
+    meanDurFirst = mean(dur[time < 60000]), 
+    meanDurAfter = mean(dur[time > 60000])
+  )
+@
+
+
+% The first couple rows are:
+% <<output.lines=2:5, echo=FALSE>>=
+% d
+% @
+
+\subexer{Carry out a paired $t$-test, using the \texttt{t.test()} function. (You'll have to figure out exactly which options and arguments to use.)}
+
+\subexer{You should find that there is a significant difference at the $\alpha = 0.05$ level. Is it positive or negative? Explain why the direction makes intuitive sense.}
+
+\subexer{There are two different answers to (b), which give the same results   (in terms of the $t$ value, $p$-value, etc.)  using different arguments to the \ttt{t.test()} function. What are these two ways, and why are they equivalent? (Hint: only one of the two ways results in R output beginning with \ttt{Paired t-test}.)}
+
+
+
+
+% 
+% Possible exercise on pairwise $t$-tests:
+% 
+% \hypertarget{example-4}{%
+% \subsubsection*{Example}\label{example-4}}
+% \addcontentsline{toc}{subsubsection}{Example}
+% 
+% For the \texttt{transitions} example (Appendix reference) just given, we first set up a dataframe with three columns:
+% 
+% \begin{itemize}
+% \item
+%   Conversation id (CHANGE to 'file', which is what it's called in dataset)
+% \item
+%   Mean transition duration (\ttt{dur}) during the first minute (\ttt{time}$<$ 60000 msec)
+% \item
+%   Mean transition duration after the first minute
+% \end{itemize}
+% 
+% <<>>=
+% d <- transitions %>%
+%   group_by(file) %>%
+%   summarise(meanDurFirst = mean(dur[time < 60000]),
+%             meanDurAfter = mean(dur[time > 60000]))
+% d
+% @
+% 
+% \subexer{Use the  whether \texttt{d\$meanDurFirst\ -\ d\$meanDurAfter} is statistically significantly different from 0 (\(\alpha = 0.05\))}
+% 
+% <<>>=
+% t.test(d$meanDurFirst, d$meanDurAfter, paired=TRUE)
+% @
+% 
+% Thus, there is a significant difference (\(p<0.0001\)).
+% 
+% Is the difference positive or negative?
+
+
+%% FUTURE: this is a good exercise (below) to implement but it's commented out for now for a readable chapter
+% \exer{Invariance to transformations}
+% \label{ex:invariance}
+% 
+% Nice exercise to illustrate how non-parametric tests invariant to transformations: compare hebben and zijnheb for the regularity data, using regular and sqrt-transformed variable. For t.test flips signifiacnce (because sqrt makes data not right-skewed).  For Wilcoxon test does nothing. 
+% 
+% - Addresses old text: "Wilcoxon tests are robust to monotonic transformations of the data---for example, log-transforming each sample won't change the result of a test."
+% 
+
+\end{exercises}

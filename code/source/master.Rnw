@@ -1,0 +1,1379 @@
+
+% This style uses Syntax and Times Roman fonts. In order
+% to use these fonts you should copy the contents of the
+% fontfiles.zip into the same directory where your
+% main .tex file is found. Now, instead of running pdflatex
+% on your file, please run lualatex instead. This will give
+% you .pdf output with the correct fonts embedded. 
+
+% Lualatex is included in the general LaTeX distribution, and
+% is no more difficult to use than pdflatex.
+
+% If you find you have difficulty with lualatex, you can instead
+% use pdflatex and Helvetica fonts will be substituted for
+% Syntax fonts. The results will not be as handsome, but will
+% still be serviceable.
+
+%% hyper = can use hyperref commands
+\documentclass[hyper]{Linguistics}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Setting  Options
+
+%% You can call for the manuscript option, for
+%% double spacing:
+%\documentclass[manuscript]{Linguistics}
+
+%% Another option is `hyper'
+%% to turn on the commands found in the hyperref package:
+%\documentclass[hyper]{Linguistics}
+% Information on hyperref commands found here:
+% https://en.wikibooks.org/wiki/LaTeX/Hyperlinks
+% 
+% For Hyperref package options and user commands:
+% http://tug.ctan.org/tex-archive/macros/latex/contrib/hyperref/doc/manual.pdf
+% 
+% The hyperref package is entered at the very end of the Linguistics.cls
+% file, in case you'd like to make changes to the package options.
+% 
+%%%%%%%%%%%%%%%%%%
+% Cropmarks are used by default. If you  want to turn cropmarks off, type
+% \nocropmarks (before begin doc command)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Set title, optional subtitle, optional edition, 
+%% and author here:
+
+\title{Regression Modeling for Linguistic Data}
+\subtitle{}
+\edition{}
+\author{Morgan Sonderegger}
+
+%% ie:
+% \title{Economics of Industrial Ecology}
+% \subtitle{Materials, Structural Change, and Spatial Scales}
+% \edition{Second Edition}
+% \author{Jeroen van den Bergh and Marco A. Jannsen}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% Choose which index form you'd like and uncomment 
+%% appropriate index commands below.
+
+%% See end of this file for more index instructions %%%%
+
+%% For single index uncomment the following 2 lines
+%\usepackage{makeidx}
+%\makeindex
+
+%% For multiple indices, uncomment the following 3 lines
+% \usepackage{multind}
+% \makeindex{topics}
+% \makeindex{authors}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%
+% Author definitions go before beg doc
+
+% ie, \def\taupav{\tau_{\mathrm{Pav}}}
+
+% It's better to put definitions in the body of your .tex file
+% rather than having a separate file for your macros, which
+% can become separated from your .tex file.
+
+
+%%% added by MS to use IPA characters, nice tables, custom lists
+\usepackage{tipa}
+\usepackage{booktabs}
+\usepackage{enumitem}
+
+
+%%% MS: make color of warnings black, when we do print them:
+\definecolor{warningcolor}{rgb}{0,0,0}
+
+%%% so can underline over multiple lines
+\usepackage{soul}
+
+
+%% MS: changes emphasis to underline
+% \usepackage{ulem}
+
+
+%% MS: was present in wordbank book, not sure if in MIT Press style
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+
+
+%% MS: various macros
+\newcommand{\figref}[1]{Figure \ref{#1}}
+\newcommand{\tabref}[1]{Table \ref{#1}}
+\newcommand{\appref}[1]{Appendix \ref{#1}}
+\newcommand{\secref}[1]{Section\ \ref{#1}} 
+\newcommand{\chapref}[1]{Chapter \ref{#1}} 
+\newcommand{\tsc}[1]{\textsc{#1}}
+\newcommand{\ttt}[1]{\texttt{#1}}
+% 
+% 
+% \newcounter{boxno}
+% \newcommand{\boxno}[1]{\refstepcounter{boxno}\label{#1}}
+% \@addtoreset{boxtextnum}{chapter}
+
+%% MS ADDED to get box numbering to work
+\numberwithin{boxtextnum}{chapter}
+
+\numberwithin{exercise}{chapter}
+
+
+\newcommand{\todojt}[1]{\textcolor{red}{TODO-JT: #1}}
+
+
+
+
+\nocropmarks
+
+%% MS: added to try to get an "example" environemnt; not in MIT Press
+%% TODO: ask about this in typesetting...
+\newcounter{example}[chapter]
+\newenvironment{example}[1][]{\refstepcounter{example}\par\medskip
+   \noindent \textbf{\paragraphfont{Example~\thechapter.\theexample #1}} \rmfamily}{\hrulefill\medskip}
+
+
+
+\begin{document}
+
+
+%% knitr and formatting setup
+<<setup, include=FALSE, cache=FALSE, echo=FALSE>>=
+library(knitr)
+library(xtable) # needed for various table printing
+# 
+# ## global libraries and stuff
+library(languageR)
+library(tidyverse) # add in this order so select isn't masked by MASS version
+library(feather)
+
+## added by MS for multiple-file compilation using knitr
+opts_knit$set(self.contained=FALSE)
+
+## MS: attempt to not have code output overflow (this is an R option)
+## R default is 80
+options(width=67)
+
+## MS: tibble print command to just look like standard dataframe print
+print.tbl_df <- function(x, ...) {
+  print.data.frame(x, ...)
+  invisible(x)
+}
+
+## MS: sigfig = 2 for tidy prinitng / tibbles
+options(pillar.sigfig = 2)
+
+# MS: never show significance stars. 
+# TODO: contextualize somewhere
+options(show.signif.stars = FALSE)
+
+## MS: would do this to  make code chunks appear as black/white
+## (with new problem -- no grey background)
+## see here on knitr themes: https://gist.github.com/yihui/3422133
+## thm <- knit_theme$get("greyscale0")
+## knit_theme$set(thm)
+##
+library(ggplot2)
+library(ggthemes)
+library(ggeffects)
+
+# change ggplot2 defaults:
+theme_custom <- function(base_size = 11, base_family) {
+  theme_minimal(base_size = base_size, base_family = base_family) %+replace% 
+    theme(
+      # custom theme options
+      axis.title = element_text(color = "grey20"),
+      axis.text = element_text(color = "grey33", size = rel(0.8)),
+      legend.text = element_text(color = "grey20"),
+      legend.title = element_text(color = "grey20"),
+      strip.text = element_text(color = "grey20", size = rel(0.9))
+    )
+}
+
+#theme_set(theme_custom(base_size = 14, base_family = 'Helvetica'))
+theme_set(theme_minimal(base_size = 13, base_family = 'Helvetica') +
+    theme(strip.text.x = element_text(size = 11),
+      strip.text.y = element_text(size = 11)
+    )
+)
+
+# instead of theme_custom, try theme_minimal, or theme_ggeffects for some similar options
+
+# Set colorblind colors as default for ggplots
+# options(
+#   ggplot2.discrete.fill = ggthemes::scale_colour_colorblind,
+#   ggplot2.discrete.color = ggthemes::scale_colour_colorblind
+# ) # TODO: This doesn't seem to work right
+# Instead, just overwrite the default colorscheme with the colorblind one
+scale_fill_discrete <- scale_fill_colorblind
+scale_colour_discrete <- scale_color_discrete <- scale_color_colorblind
+
+# set default color for line (as in geom_smooth, for instance, instead of default blue)
+#default_line_color <- "red" #colorblind_pal()(3)[3]
+## for greyscale
+default_line_color <- "black" #colorblind_pal()(3)[3]
+
+
+# set global chunk options
+opts_chunk$set(
+  echo=TRUE, warning=FALSE, message=FALSE,
+  fig.show='hold', cache=TRUE, highlight=FALSE,
+  # Figure defaults:
+  fig.width = 6, fig.asp = 0.68, # for consistent font size, only adjust fig.asp in individual plots
+  out.width = "75%", # adjust for any side-by-side plots
+  fig.align='center' # change to 'default' for any side-by-side plots 
+)
+# set these for use in calculating fig.width in individual plots
+default_out.width <- .75
+default_fig.width <- 6
+
+# highlight = FALSE : turns off syntax highlighting in the code blocks, which
+# gets rid of color and takes care of underscores not being printed right
+
+## sets code chunks plus output to be 'small' globally, as opposed to 'normalsize'. 
+## the options are like latex: c("normalsize", "tiny", "scriptsize",
+##  "footnotesize", "small", "large", "Large", "LARGE", "huge", "Huge")
+opts_chunk$set(size='small')
+
+## set global xtable options
+## there's a weird bug otherwise where it thinks include.colnames is defined twice
+# options(xtable.include.colnames=FALSE)
+
+
+## see if this hook from online works
+## for just printing certain output lines:
+
+  # knitr hook function to allow an output.lines option
+  # e.g., 
+  #   output.lines=12 prints lines 1:12 ...
+  #   output.lines=1:12 does the same
+  #   output.lines=3:15 prints lines ... 3:15 ...
+  #   output.lines=-(1:8) removes lines 1:8 and prints ... 9:n ...
+  #   No allowance for anything but a consecutive range of lines
+
+
+hook_output <- knit_hooks$get("output")
+knit_hooks$set(output = function(x, options) {
+   lines <- options$output.lines
+   if (is.null(lines)) {
+     return(hook_output(x, options))  # pass to default hook
+   }
+   x <- unlist(strsplit(x, "\n"))
+   more <- "..."
+   if (length(lines)==1) {        # first n lines
+     if (length(x) > lines) {
+       # truncate the output, but add ....
+       x <- c(head(x, lines), more)
+     }
+   } else {
+     x <- c(if (abs(lines[1])>1) more else NULL, 
+            x[lines], 
+            if (length(x)>lines[abs(length(lines))]) more else NULL
+           )
+   }
+   # paste these lines together
+   x <- paste(c(x, ""), collapse = "\n")
+   hook_output(x, options)
+ })
+@
+
+
+%% all helper functions: external file
+<<common, cache=FALSE, echo=FALSE>>=
+source('_common.R')
+@
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Using Include 
+%% Many authors set up their book using \include{}
+%%
+
+%% For instance:
+% \include{front} %% containing all the front matter
+% \include{chap1}
+% \include{chap2}
+% \include{chap3}
+% \include{chap4}
+% ...
+% \endinput % end book here until ready to do endmatter
+% \endnotes
+% \include{glossary}
+% \bibliographystyle{mit-chicago}
+% \bibliography{bibsamp}
+% \printindex
+
+%% Using \includeonly{chap1,chap3,etc.}
+%% You can use \includeonly{} before beg document to
+%% include only the chapters you are presently working on.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% This example does not use include. This front matter could
+%% be in a separate file if you were using include
+
+% \title{}
+% \subtitle{}
+%% optional
+% \edition{}
+%% author, or authors
+% \author{}
+
+%% ie
+% \title{Economics of Industrial Ecology}
+% \subtitle{Materials, Structural Change, and Spatial Scales}
+% \edition{Second Edition}
+% \author{Jeroen van den Bergh and Marco A. Jannsen}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% makes half titlepage print, using info entered above
+  \halftitlepage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Make titlepage print, using info given above
+ \titlepage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Copyright page
+%% Enter the items marked with ??
+
+\begin{copyrightpage}
+	$\copyright$ 20XX Massachusetts Institute of Technology
+
+	All rights reserved. No part of this book may be reproduced in
+        any form or by any electronic or mechanical means (including
+        photocopying, recording, or information storage and retrieval) without
+        permission in writing from the publisher.
+
+	For information about special quantity discounts, please email special sales@mitpress.mit.edu.
+
+	This book was set in Syntax and Times Roman by the author.
+
+	Printed and bound in the United States of America.
+
+	Library of Congress Cataloging-in-Publication Data
+
+	<?? Book Title> / <?? Book Author> .\\
+	\hspace*{6pt} p. cm.
+
+	Includes bibliographical references and index.\\
+	ISBN ????
+\vfill
+
+10\ 9\ 8\ 7\ 6\ 5\ 4\ 3\ 2\ 1\
+
+\end{copyrightpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Dedication page
+\dedication{To Katie, Ariel, and Cleo}
+
+% ie,
+% \dedication{To our families, with gratitude,\\ ---JB and
+% MJ} 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Optional Epigraph page, use as many epigraphs as you want
+
+ \begin{epigraphpage}
+ \epigraph{Statistics and cooking are as much arts as they are science, although both have strong links to their corresponding science: mathematics in the case of statistics, and chemistry in the case of cooking... If I can convey to you some of the enjoyment and intellectual challenge that lies in my particular variety of cooking, and encourage you to try it yourself, I will have succeeded in my aims.''}{Terry Speed, `Questions, answers, and statistics'}
+
+ \epigraph{All models are wrong, but some are useful.''}{George Box}
+
+ \end{epigraphpage}
+
+%%%%%
+% ie,
+% \begin{epigraphpage}
+% \epigraph{Begin at the beginning,'' the King said, gravely, ``Then
+% go till you come to the end; then stop.''}{Lewis Carroll, {\it Alice
+% in Wonderland}}
+
+% \epigraph{You can never get a cup of tea large enough or a book long enough to
+% suit me''}{C. S. Lewis}
+% \end{epigraphpage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Table of Contents, List of Figures, List of Tables
+\setcounter{secnumdepth}{3}
+
+\setcounter{tocdepth}{2}
+
+\tableofcontents
+
+%%% These lists are optional:
+% \listoffigures
+% \listoftables
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Preface
+
+%\begin{preface}
+% <preface text>
+% end with:
+% \author{<author name>}
+% \date{<date of preface>(month and year)}
+% \end{preface}
+
+
+\begin{preface}
+
+
+This book introduces applied regression analysis for analyzing linguistic data, using R.
+%assumnig some
+%and (mainly) \ttt{tidyverse} functionality,
+%assuming some prior  statistics and R.
+It aims to provide both conceptual understanding and practical skills through extensive examples, using different kinds of linguistic data, in three parts:
+\begin{itemize}
+\item \textbf{Preliminaries to regression modeling} (Chapters 1--3): assumptions, inferential statistics, hypothesis testing, power and other errors.
+
+\item \textbf{Regression models for non-clustered data} (Chapters 4--7): linear regression, model selection and validation, logistic regression, practical topics (e.g.,\ contrast coding, post-hoc tests, nonlinear effects).
+
+\item \textbf{Regression models for clustered data} (Chapters 8--10):  linear and logistic mixed-effects models, practical topics (e.g.,\ model predictions, convergence, model selection).
+\end{itemize}
+
+The book started as a minor revision of \emph{Quantitative methods for linguistic data} \citep[][]{qmld}, co-authored with Francisco Torreira and Michael Wagner, which itself grew out of lectures for a one-semester graduate quantitative methods course at McGill Linguistics taught most years.  %The plan was to quickly address some issues raised by reviewers prior to publication as a `real' book.
+I ended up rewriting the entire manuscript, including adding several new chapters.
+%drastically modifying every chapter and adding several new ones.
+%over 2+ years.
+So this book is best understood as a new text, which incorporates aspects of QMLD.
+%but is (I hope) a substantial improvement.
+I thank Michael and Francisco for their understanding, and letting me incorporate their work.
+%into this book.
+
+\textbf{Online version only:} This is a near-final version of the book, which will eventually be published in hardcopy.  This PDF version is made available here for 
+%; this version
+%and this version 
+%is made available here for 
+%This is a (near-final) version of a book which will eventually be published, made available here for 
+\textbf{non-commercial purposes} only. Any feedback is welcome
+%As such, there will be revisions before the final version, and \textbf{feedback is welcome} 
+(\ttt{morgan.sonderegger@mcgill.ca}).
+%especially corrections or suggested clarifications.  
+I hope to update the book's website, which also contains all code and datasets, as the text is updated in the future.\footnote{The website is currently at \url{osf.io/pnumg/}.  Please check my personal web page if the OSF link no longer works when you read this.}
+
+
+\paragraph{Audience}
+
+This book is for graduate students and researchers in linguistics and other language sciences, who work with quantitative data. This includes `data-heavy' subfields of linguistics (e.g.,\ experimental syntax/semantics/phonology, phonetics, psycholinguistics, corpus linguistics, language acquisition, sociolinguistics), as well as communication sciences and disorders, psychologists or cognitive scientists of language, and so on.  I have taught this material since 2013 to students and faculty about 50\% from each. I use `linguist' and `language scientist' interchangeably in this book for brevity, similarly for `linguistics' and `language sciences'.\footnote{The different connotations of the two terms are not relevant for statistical analysis.}   The text assumes knowledge of elementary linguistics, using terms like `phone' or `lexical item' without comment, but should be understandable regardless (you'll just have to think of some variables as $y$ or $x$ rather than `VOT' or `place of articulation').
+
+%% These are the most detailed recent treatments.
+
+%
+% Some possible resources are:
+% \begin{itemize}
+% \item Math, probability: Khan Academy videos, TODO Goldwater tutorials
+% \item Descriptive statistics: Gries 2013 Ch. 3 (45 pp); R4DS chapters
+% \item Inferential statistics: see Chapter 2 `Other reading'.
+% \item R: many good tutorials online; RMLD for tidyverse.
+% \end{itemize}
+
+\paragraph{Background}
+
+This book joins many existing texts on quantitative analysis/statistics for linguists, mostly also practical introductions using R, including \citet[][]{brezina2018statistics,eddington2016statistics,garcia2021data,gomez2014statistical,gries2021statistics,gries2013statistics,johnson2008quantitative,levshina2015linguistics,rietveld1993statistical,rietveld2005statistics,vasishth2011foundations,vasishth2021linear,winter2019statistics}. \citet{baayen2008analyzing} has been particularly influential. These texts differ in many respects, such as the type of linguistic data assumed and the theory/practice balance,  but mostly share two aspects: starting from scratch, and broad scope (`statistics' or `quantitative analysis' generally).
+
+The approach of this book, described in more detail in the next chapter, is different.  Its goals are narrower---conceptual understanding and practical experience with \textbf{regression modeling} of linguistic data---and I assume you have some experience with statistics and R (detailed below).  We do not cover other (important) quantiative tools, such as classification methods or exploratory data analysis. While I don't assume you have read any of the books above, the current book can be seen as complementary to them.
+
+I focus on regression models because these are increasingly the main form of statistical analysis in papers (using quantitative data) published in major journals, but they are complex tools to use in practice.   I give  \textbf{practical and detailed treatments} of a smaller number of topics, %using detailed examples,
+describing decision points and the pros and cons of different methods,  conventions in the current language sciences literature, and how to report your analyses. The goal is to equip you to use these methods in practice and understand how they are used in current work.  We will not cover the full range of possible regression models (e.g.,\ Poisson or multinomial models), but extending to them should be straightforward after this book.
+
+Other differences from existing texts are a greater focus on data from (laboratory) phonology, phonetics, and language variation and change (though other areas are represented); and equal emphasis on observational data (especially from speech corpora) and data from controlled experiments. These reflect my own background as a linguist working primary in these areas,
+%sounds, variation, and change,
+often using corpus data---but I have tried to keep the presentation useful for language scientists generally.
+
+
+Regression modeling is used across many scientific fields,
+%so the underlying methods have often been written about lucidly elsewhere,
+and we can learn from best practices in other fields to better analyze linguistic data.  At the same time, it’s easier to learn data analysis with data that looks like your own, and analysis tools become specialized for particular kinds of data as they are used in a field over time.
+%Rather than treating analysis of linguistic data as self-contained,
+%and
+%which often have book-length treatments; this book attempts to do the same for language data. because the underlying methods have often been written about elsewhere,
+I try to give context and places to read more for particular topics of interest---from (statistics for) language sciences, but also behavioral sciences, social sciences, and ecology---both in the text and in `Other readings' at the end of each chapter.  No statistical method used in this book is new, so it is neither possible nor useful to give comprehensive citations; I give references I am familiar with and have found helpful, including particularly detailed treatments of linguistic data by other authors (books cited above, plus articles).  My goal is to provide useful entry points to the vast literature on statistical methods, for when you want to learn more.
+
+% We see this approach as complementary to existing texts, which tend to cast a wider net and start from scratch.  The book can be seen as building on  \citet{baayen2008analyzing}, the most influential book above, but which is a practical introduction which is out of date in some respects has been especially influential.
+
+% Closest to Baayen (v practical), updated (now 13 years old); Winter (focused on regression, but less detailed).
+% Regression modeling is a complex topic, where the core aspects (e.g.,\ statistical theory) best practices differ depending on the kind of data examined. Other fields have book-length treatments, and this book attempts to do the same for language data. Because these tools are used across fields, I try to give context and places to read more for particular topics of interest---from (statistics for) language sciences, but also psychology, social sciences ecause these tools are used across fields, try to give context and places to read more , for particular topics of interest -- from both language sci/psych and further afield: psychology, social sciences, ecology, general theory.
+
+
+\paragraph{What you need to know}
+
+%This book assumes some exposure to several areas.
+This is an `intermediate' text.  It assumes previous exposure to quantitative methods, such as from one of the books above, but aims to be useful for readers with different backgrounds.
+
+You should be familiar with secondary school \textbf{math} concepts, such as algebra, logarithms, exponentials, summation notation, and basic linear algebra (vectors, matrices, matrix multiplication); as well as some \textbf{probability theory}: what terms like `probability distribution', `normal distribution', `random variable', `binomial distribution', and `conditional probability' mean.
+%\begin{itemize}
+%\item Resources: Khan Academy videos, TODO Goldwater tutorials, REFs
+%\end{itemize}
+
+Most important is familiarity with \textbf{statistics}, at the level of a first course:
+\begin{itemize}
+\item \emph{Descriptive statistics}: data summarization and visualization: what concepts like `mean', `mode', `standard deviation', `quantile', and `correlation' mean; how to make and read common statistical plots (e.g.,\ boxplots, histograms, density plots, scatterplots).
+\item \emph{Inferential statistics}: the idea of sample and population, basic hypothesis testing concepts ($p$-values, test statistics) and tests ($t$-tests, $\chi^2$-tests), maybe basic analysis of variance.
+\end{itemize}
+
+%It is fine if you are rusty with some topics; many will be re-introduced as we go.
+%listed above, many of which will re-introduced as we go.
+
+
+The book focuses on conceptual understanding and practical skills by working `in R', but without actually providing instruction in R. Thus, I assume a working knowledge of \textbf{R and R programming}, including both `base R' and  some familiarity with {tidyverse} functionality (packages like {ggplot2}, {dplyr}: \url{tidyverse.org}).\footnote{Some people have strong opinions about `base R' versus {tidyverse}. If you don't like one `idiom' or the other, it will be perfectly possible to follow along,
+we just won't be explaining particular functions in detail.}
+
+In practice, dozens of graduate students with a variety of backgrounds in these areas (including `not much') have done well in the course using this book’s material, with some doing extra work to catch up.  In particular, many students have learned R from scratch at the same time as using this book, using online tutorials for `base R' and \emph{R for Data Science} \citep{grolemund2016datascience} for {tidyverse}, and students with less math background than described above have done well.
+
+Some resources for math/probability/statistics are Khan Academy videos, Sharon Goldwater's math tutorials,
+%% TODO: add reference once Sharon gives OK
+general statistics books listed in Chapter 2 `Other reading', and those for linguistics listed above; for descriptive statistics and visualization, \citet{grolemund2016datascience} (general), \citet[][Ch.\ 3]{gries2021statistics}, \citet[Part II]{garcia2021data} (linguistics) are particularly thorough.
+
+
+
+\paragraph{Caveat}
+
+A note on \emph{my} background: I am not a statistician, but a self-taught practitioner with some Masters-level math/statistics training.  Books written by practitioners can be useful because of the perspective of working with this kind of data, but can also contain errors; sources written by statisticians tend to have the opposite pros and cons.  If you frequently use a particular tool or framework for data analysis, I recommend (eventually) consulting a more authoritative source; one goal of this book is to equip you to do so.  This is particularly important because statistical practice is not static: this book emphasizes practical skills (e.g.,\ which package to use, best practices for fitting and interpreting models), for which best practices are constantly evolving.  My aims are for this book to be as useful for analyzing linguistic data and as (technically) correct as possible, and feedback on either point is welcome.
+
+\paragraph{How to use this book}
+
+This book is ideally \textbf{read while executing the code} shown in code blocks on your own computer, e.g.,\ pasting them in to RStudio or the R console. The code in each chapter is independent, so you should always be able to start reading/coding at the beginning of a chapter.  I often refer to objects that have been created in previous code, and sometimes the output of running code is not actually shown (assuming you can see it in your console).
+
+Most code is shown in the actual PDF; this is the code I assume you are able to run.  An important exception is code for creating plots, 
+%typically using the \ttt{ggplot2} package, 
+which is usually omitted because code to make decent plots is
+%which I generally do not show; this is just because code to make decent %plots is
+verbose.  You can find \textbf{all code} (including plotting code) in the code file for each chapter, on the book's website.
+%in the book's OSF project  (\url{osf.io/pnumg/}).
+
+
+Each chapter consists of main text and two kinds of boxes, inspired by \citet{mcelreath2020statistical}'s \emph{Statistical Rethinking}.  Boxed text is not essential for understanding the main text, and gives two types of
+%and can %be skipped.
+%, especially   on a first reading.
+%Boxes give
+extra information. `Broader context' boxes provide more in-depth explanations of technical concepts or math, connect to other approaches, discuss common misunderstandings, and so on.
+%and references for further reading if you're interested.
+`Practical note' boxes discuss
+%statistical reporting, math refreshers, rules of thumb, and so on---
+aspects of statistical analysis you're unlikely to delve into until you actually use these methods in your own work, such as statistical reporting or R details.
+
+Offsetting materials in boxes is intended to make the book easier to use. %now and later.
+On a first read you can focus just on the essentials by skipping boxes, and when actually analyzing your own data later or learning more about a particular method, the boxes call out relevant material.  %Note that some boxes involve math beyond the level 
+
+\paragraph{Datasets}
+
+This book uses publicly available datasets, all available on the book's website
+%(\url{https://osf.io/pnumg/})
+or in the {languageR} package.   I am grateful to dataset authors for their willingness to post data publicly: Michael Wagner (\ttt{givenness}); Timo Roettger and Bodo Winter (\ttt{neutralization}); Francisco Torreira, Se\'{a}n Roberts, and Stephen Levinson (\ttt{transitions}); Michael McAuliffe and Hye-Young Bang (\ttt{turkish\_if0}); Max Bane and Peter Graff (\ttt{vot}); and R. Harald Baayen and co-authors (\ttt{english}, \ttt{regularity}).
+
+
+\paragraph{Acknowledgements}
+
+Many people deserve thanks for the long journey to a
+%the long road
+%to
+%from hastily-written slides to an
+book. Above all, students in McGill classes from 2013 to 2021 provided feedback, as did students who continued to use the materials for their research---especially Hye-Young Bang, Am\'{e}lie Bernard, Guilherme Garcia, Claire Honda, Oriana Kilbourn-Ceron, Donghyun Kim, Bing'er Jiang, Jeff Lamontagne,  James Tanner, and Connie Ting. Substantial editing and typsetting work have been done by David Flesicher, Claire Honda, Jacob Hoover, Vanna Willerton, and especially Michaela Socolof. Colleagues who have offered encouragement and comments over the years include Meghan Clayards, Jessamyn Schertz, Tyler Kendall, Michael Wagner, Paul Boersma, Christian Di Canio, Volya Kapatsinki, Roger Levy, Jane Stuart-Smith, Tim O’Donnell,  Alan Yu, Bodo Winter, Tania Zamuner, and five anonymous reviewers. Special thanks go to James Kirby for comments on the entire manuscript, and reminders to keep going.  I am grateful to you all, including those I have forgotten.  Finally, I am thankful to Katie for her companionship, support, and especially patience---it's finally done.
+
+% More than citations convey, we are indebted to existing materials by R. Harald Baayen, Ben Bolker, Samprit Chatterjee & Ali Hadi, Florian Jaeger, Roger Levy, Shravan Vasishth, Hadley Wickham, and especially Andrew Gelman & Jennifer Hill (Data analysis using regression and multilevel/hierarchical models).
+
+\author{Morgan Sonderegger}
+\date{January 2022}
+\end{preface}
+
+%\part{Part 1: Preliminaries to regression models}
+
+<<chap1, child='001-modeling-intro.Rnw'>>=
+@
+
+<<chap2, child='002-inference.Rnw'>>=
+@
+
+<<chap3, child='003-effectsize-power.Rnw'>>=
+@
+
+%\part{Part 2: Regression models for non-clustered data}
+
+<<chap4, child='004-linear-regression-1.Rnw'>>=
+@
+
+<<chap5, child='005-linear-regression-2.Rnw'>>=
+@
+ 
+ <<chap6, child='006-cda-logistic-regression.Rnw'>>=
+ @
+ 
+<<chap7, child='007-practical.Rnw'>>=
+@
+ 
+% %\part{Part 3: Regression models for clustered data}
+  
+<<chap8, child='008-linear-mixed-models.Rnw'>>=
+@
+ 
+<<chap9, child='009-mixed-models-2.Rnw'>>=
+@
+
+<<chap10, child='010-mixed-models-3.Rnw'>>=
+@
+
+
+
+%
+% <<chap9, child='010-dimensionality-reduction.Rnw'>>=
+% @
+% 
+% 
+%<<chap10, child='011-conclusion.Rnw'>>=
+%@
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Part, partintro
+%%
+% \part[<optional short version of title for TOC>]
+% {<part title>}
+
+%% optional part introduction
+%\begin{partintro}
+% \partintrotitle{<text>}
+%<text. Section heads will not be numbered>
+%\end{partintro}
+
+%%%%%%
+%% ie
+% \part[Environmental Policy Analysis]
+% {Environmental Policy Analysis: Various Models for Material
+% Flows in the Economy}
+% \begin{partintro}
+% \partintrotitle{This is an introduction to the part}
+% Policy analysis may be divided into a number of subspecialities\ldots
+% 
+% \end{partintro}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Chapter Head
+
+%% note: if you want to break a line in the title in the TOC,
+%% add \string\\ where you want the line break
+
+% \chapter[<optional short version for TOC>]
+% {<chapter title>} %% may use \\ to break lines in chapter title
+                  %% but remember to use [<short title>] without the \\
+
+%% to send another version of chapter title to running head:
+% \chaptermark{<another version of chapter title>}
+
+%% If edited book:
+% \chapterauthor{<author name>}
+
+%% Optional one or more Epigraphs
+%% The first quotation mark will be supplied, so don't type it in:
+% \epigraph{<quote>''}
+% {<author>}
+% \epigraph{<quote>''}
+% {<author>}
+
+%% Optional abstract
+% \begin{abstract}
+% <text>
+% \end{abstract}
+
+%%%%%% 
+%% ie
+% \chapter[Environmental Policy Analysis with STREAM:\protect\\
+% Equilibrium Model for Material Flows in the Economy]
+% {Environmental Policy Analysis with STREAM: A Partial
+% Equilibrium Model for Material Flows in the Economy}
+% 
+% \chaptermark{Environmental Policy Analysis with STREAM}
+% 
+% \chapterauthor{Hein Mannaerts}
+% 
+% \epigraph{What star falls unseen?''}{William Faulkner}
+% \epigraph{All seats provide equal viewing of the universe.''}{Museum
+% guide, Hayden Planetarium}
+% 
+% \begin{abstract}
+% Commercial robots are shown to be an effective manufacturing tool, but
+% some shortcomings are noted, particularly their lack of mobility.
+% \end{abstract}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Section heads
+
+% \section{<text>}
+% \subsection{<text>}
+% \subsubsection{<text>}
+% \paragraph{<text>}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Notation, show symbols or terms and then define them
+
+% \begin{notation}
+% <term>&<definition>\\
+% <term>&<definition>\\
+% <term>&<definition>\\
+% ...
+% \end{notation}
+
+%%%%%%%
+%% ie
+% \begin{notation}
+% $g_{\mu\nu}(x^\lambda)=g_{\nu\mu}(x^\lambda)$&symmetric tensor\\
+% $g_{\mu\nu}\equiv\eta_{\mu\nu}=\mathrm{diag}(−1,1,1,1)$&Minkowski
+% spacetime\\
+% \end{notation}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Note
+%% The \note{} text will appear in the Notes section 
+%% at the end of the chapter and/or the end of the book.
+%% Remember to use the note at the end of a paragraph, 
+%% not on its own line.
+
+
+% \note{<text here>}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Extract
+
+% \begin{extract}
+% <text>
+% (<author of extract, where published, optional url>)
+% \end{extract}
+
+%%%
+% ie
+
+% \begin{extract}
+% The distance $ds$ between two neighboring events, one with coordinates...
+% (Kostas D. Kokkotas, Article for the Encyclopedia of Physical Science
+% and Technology, 3rd Edition, Volume 7, Academic Press, (2002)
+% \url{http://www.tat.physik.uni-tuebingen.de/~kokkotas/Teaching/NS.BH.GW_files/GW_Physics.pdf})
+% \end{extract}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Boxed Text
+% Will continue over pages; may contain section heads, extracts, equations, theorems, 
+% programming code, algorithms, etc.
+% within the box. May use empty argument if you don't want title: \begin{boxedtext}{}...\end{boxedtext}
+
+%\begin{boxedtext}{<title>}
+% <text>
+% optional attribution:
+%(author, where published, \url{})
+%\end{boxedtext}
+
+%%%%
+% ie
+
+%\begin{boxedtext}{Frank Wilczek on Einstein and Gravitation}
+%...
+% (Frank Wilczek, Physics Today, April 2016,
+% \url{scitation.aip.org/content/aip/magazine/physicstoday/article/69/4/10.1063/PT.3.3137})
+% \end{boxedtext}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Programming Code; 
+% either \begin{code}\begin{verbatim}...\end{verbatim}\end{code} or
+% \begin{algorithm}\caption{<text>}
+% \begin{algorithmic}...\end{algorithmic}
+% \end{algorithm}
+
+% \begin{code}
+% \begin{verbatim}
+% <code here>
+% \end{verbatim}
+% \end{code}
+
+%% or \begin{algorithm}...\end{algorithm}
+%% See https://en.wikibooks.org/wiki/LaTeX/Algorithms for examples
+%% http://tug.ctan.org/macros/latex/contrib/algorithms/algorithms.pdf
+
+%%%%%
+%% ie
+
+%% (\begin{algorithm} takes option [p][b][t][h],  or some combination, like \begin{figure})
+% \begin{algorithm}[h]
+% \caption{A sample in an algorithm environment.}
+% \begin{algorithmic}
+% \If {$i\geq maxval$}
+%     \State $i\gets 0$
+% \Else
+%     \If {$i+k\leq maxval$}
+%         \State $i\gets i+k$
+%     \EndIf
+% \EndIf
+% \end{algorithmic}
+% \end{algorithm}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Outline, see LinguisticsSample for an example.
+%% Use \begin{outline}...\end{outline};
+%% Use enumerate for each level, use \item[<symbol>] for each item:
+
+% \begin{outline}
+
+% \begin{enumerate}
+% \item[I.]
+% <text>
+% 
+% \item[II.]
+% <text>
+% 
+% \begin{enumerate}
+% \item[A.]
+% <text>
+% 
+% \begin{enumerate}
+% \item[1.]
+% <text>
+% 
+% \item[2.]
+% <text>
+% \end{enumerate}
+% 
+% \item[B.]
+% <text>
+% 
+% \item[III.]
+% <text>
+% 
+% \end{enumerate}
+
+% \end{outline}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Dialogue
+
+% \begin{dialogue}
+% \speaker{<name>}
+% <Text>
+% \speaker{<name>}
+% <Text>
+% \speaker{<name>}
+% <Text>
+% \end{dialogue}
+
+%%%%%
+%% ie
+% \begin{dialogue}
+% \speaker{France C\'ordova}
+% It’s been decades, through a lot of different technological innovations...
+%
+% \speaker{Janna Levin}I was freaking out!
+% 
+% \speaker{Robert Garisto} [the editor of Physical Review Letters] 
+% I got goose bumps while reading the LIGO paper.
+% \end{dialogue}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Figure: illustration above, caption below, cross referencing \label{}
+% within or after caption, not before it.
+
+% \begin{figure}[t]
+% <illustration here>
+% \caption[<optional text to go to List of Figures>]
+% {<text of caption>}
+% \end{figure}
+
+%%%%%%%%%%%%%%%%%%%
+%% Landscape Figure
+
+% \begin{figure}[p]
+% \rotatebox{90}{\hskip<dimen> %to position figure vertically
+% \vbox {\includegraphics[width=\textheight]{<file name>}
+% \caption{<caption text}
+% }%% <== end \vbox
+% }%% <== end \rotatebox
+% \end{figure}
+
+% For instance,
+% \begin{figure}[p]
+% \rotatebox{90}{\hskip-3in\vbox {\includegraphics[width=\textheight]{gravwaves}
+% \caption{(landscape figure)
+% Graphic showing two black holes generating gravity waves.}}}
+% \end{figure}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Table: caption above, table below. Cross-referencing \label{}
+% within or after caption, not before it.
+
+% \begin{table}
+% \caption[<optional text to go to List of Tables>]
+% {<text of caption>}
+
+% Optional centering, often used:
+% \centering
+% \begin{tabular}{lc}
+% \hline
+% Column Heads  \\
+%\hline
+% (table lines)(optional table note marker)$^a$\\
+%\hline
+% Optional table note in last line of table:
+%\multicolumn{2}{l}{$^{a}$Table note text here.}
+%\end{tabular}
+%\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Using tabular in text:
+
+%%%%%
+%% ie
+% \begin{tabular}{rlcc}
+% \hline
+% &&\multicolumn2c{$Y$= Decrease in Surface Tension}\\
+% \multicolumn2c{$x$ = Weight \% sulfur}
+% &\multicolumn2c{(dynes/cm), two Replicates}\\
+% \hline
+% 0.&034&301&316\\
+% 0.&093&430&422\\
+% 0.&30&593&586\\
+% \hline
+% \end{tabular}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Landscape table
+
+% \begin{table}[p]
+% \rotatebox{90}{\vbox{
+% \caption{<text>}
+% \begin{tabular}{@{}crrrrrrrrrrr}
+% ...
+% \end{tabular}
+% } <-- end vbox
+% } <-- end rotate
+% \end{table}
+
+% For example,
+% \begin{table}[p]
+% \rotatebox{90}{\vbox{
+% \caption{More relevant tabular information.\label{tbl-2}}
+% \begin{tabular}{@{}crrrrrrrrrrr}
+% \hline
+% Star & Height & $d_{x}$ & $d_{y}$ & $n$ & $\chi^2$ & $R_{maj}$ & $R_{min}$ &
+% \multicolumn{1}{c}{$P^a$} & $P R_{maj}$ & $P R_{min}$ &
+% \multicolumn{1}{c}{$\Theta^b$} \\
+% \hline
+% 1 &33472.5 &-0.1 &0.4  &53 &27.4 &2.065  &1.940 &3.900 &68.3 &116.2 &-27.639\\
+% 2 &27802.4 &-0.3 &-0.2 &60 &3.7  &1.628  &1.510 &2.156 &6.8  &7.5 &-26.764\\
+% ...
+% \hline\\
+% \multicolumn{12}{l}{$^a$
+% Sample footnote for table~\ref{tbl-2} that was
+% generated with the \LaTeX\ table environment}\\
+% \multicolumn{12}{l}{$^b$ Yet another sample footnote for table
+% \ref{tbl-2}}\\
+% \multicolumn{12}{l}{$^c$ Another sample footnote for
+% table~\ref{tbl-2}}\\
+% \end{tabular}}}
+% \end{table}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Lining up decimal numbers on the decimal point:
+%% For each decimal number, use two table columns; the
+%% first pushing the text to the right, the second to the left.
+%% to get rid of the space between the two columns, supply
+%% @{}, as you see in the example below. See example in LinguisticsSample.tex/.pdf
+%% in exercise section.
+
+% \begin{tabular}{r@{}lcc}
+% \hline
+% &&\multicolumn2c{$Y$= Decrease in Surface Tension}\\
+% \multicolumn2c{$x$ = Weight \% sulfur}
+% &\multicolumn2c{(dynes/cm), two Replicates}\\
+% \hline
+% 0.&034&301&316\\
+% 0.&093&430&422\\
+% 011.&30&593&586\\
+% \hline
+% \end{tabular}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Continued Caption, \continuedcaption
+%% Will work with tables And figures
+%% 
+%% It will give you ``Table <table number> (Continued)''
+%% or ``Figure <table number> (Continued)''
+%% The Table or Figure number will stay the same as the
+%% previous table or figure.
+
+% \begin{table}
+% \caption{}
+% \begin{tabular}{rlc}
+% ...
+% \end{tabular}
+% \end{table}
+% 
+% \clearpage
+% 
+% \begin{table}
+% \continuedcaption
+% \begin{tabular}{rlc}
+% ...
+% \end{tabular}
+% \end{table}
+% 
+%%  Or, for figures;
+% 
+% \begin{figure}
+% <illustration>
+% \caption{}
+% \end{figure}
+% 
+% \clearpage
+% 
+% \begin{figure}
+% <illustration>
+% \continuedcaption
+% \end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Longtable: Table that will continue over pages
+
+% Long table needs these parts for the set up:
+
+% 1) begin long table, give tabular preamble:
+% \begin{longtable}{ccc@{}}
+
+% 2) Supply caption and top of table with text preceding
+% \endfirsthead
+
+% \caption{ApJ costs from 1991 to 2013
+% \label{tab:table}} \\[2pt]
+% \hline
+% \bf Year & \bf Subscription & \bf Publication \\
+%  & \bf cost &\bf charges\\
+%  & \bf(\$) & \bf (\$/page)\\
+% \hline
+% \endfirsthead
+
+% 3) Supply continuation of table and column heads
+% before the \endhead command:
+
+% \multicolumn3c{\longtablecontinued}\\[7pt]
+% \hline
+% \bf Year & \bf Subscription & \bf Publication \\
+%  & \bf cost &\bf charges\\
+%  & \bf(\$) & \bf (\$/page)\\
+% \hline
+% \endhead
+
+% 4) Supply extra space before footer at bottom of each page;
+% ending with \endfoot.
+
+% \\[12pt]
+% \endfoot
+
+% 5) Supply final ending to table with \hline and extra vertical space preceding
+% \endlastfoot
+
+% \hline
+% \\[24pt]
+% \endlastfoot
+
+% 6) Type in table
+
+% 7) End with this command:
+% \end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Citations done with NatBib
+
+% Citations in the Linguistics book style are made using the Natbib
+% commands. See table showing commands and results in LinguisticsSample
+% or LinguisticsDocs.
+
+% See \url{http://merkel.zoneo.net/Latex/natbib.php}
+% for a reference sheet of natbib commands.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% End of Chapter
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Exercises
+
+% \begin{exercises}
+% \exer{}
+% \subexer{}
+% \sidebysidesubsubexer{}{}
+% \end{exercises}
+
+%%%%%
+%  ie
+
+% \begin{exercises}
+% \exer{For Hooker's data, Exercise 1.2, use the Box and Cox and Atkinson procedures to determine a appropriate transformation of PRES
+% in the regression of PRES on TEMP. find $\hat\lambda$, $\tilde\lambda$,
+% the score test, and the added variable plot for the score. 
+% Summarize the results.}
+
+% \subexer{The following data were collected in a study of the effect of dissolved sulfur
+% on the surface tension of liquid copper (Baes and Killogg, 1953).}
+
+% \sidebysidesubsubexer{In the case of $\Delta_1$?}{In the case of $\Delta_2$?}
+
+% \sidebysidesubexer{In the case of $\Gamma_1$?}{In the case of $\Gamma_2$?}
+% \end{exercises}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Chapter Appendix
+
+% \begin{chapappendix}{<title>}
+% <text>
+% \end{chapappendix}
+
+%%%%%
+%  ie
+% \begin{chapappendix}{Dark Matter is not composed of Black Holes}
+
+% \section{The Canada France Hawaii Lensing Survey}
+% ...
+% \end{chapappendix}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Chapter Notes: \chapternotes will make any \note{<text>} that
+%% you entered in the chapter print, at the end of the chapter.
+
+% \chapternotes
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% End of the Book
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Appendix \appendix will make \chapter and \section use
+%% letters rather than numbers. Also changes equation numbers
+%% and figure and table numbers.
+
+\appendix
+
+<<app1, child='101-datasets-appendix.Rnw'>>=
+@
+
+<<app2, child='102-r-appendix.Rnw'>>=
+@
+
+
+
+% \chapter{<title>}
+% \section{<section head>}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% IMPORTANT:
+% After Appendices, please enter
+
+\endmatter
+
+% This command will give a little extra space in the Table of Contents
+% before the Glossary and/or Bibliography, Index, other end of book 
+% commands are printed.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Glossary
+
+\begin{glossary}
+\term{AIC}{Aikake information criterion}
+\term{AME}{Average marginal effect}
+\term{APA}{American Psychological Association}
+\term{ASA}{American Statistical Association}
+\term{BIC}{Bayesian information criterion}
+\term{BLUP}{Best linear unbiased predictor}
+\term{CDA}{Confirmatory data analysis}
+\term{CDI}{MacArthur-Bates Communicative Development Inventory}
+\term{CI}{Confidence interval}
+\term{$df$}{Degrees of freedom}
+\term{EDA}{Exploratory data analysis}
+\term{ESS}{Explained sum of squares}
+\term{FWER}{Family-wise error rate}
+\term{GAM}{Generalized additive model}
+\term{GLM}{Generalized linear model}
+\term{GLMM}{Generalized linear mixed model}
+\term{IN}{Incomplete neutralization}
+\term{LOESS}{Locally estimated scatterplot smoothing}
+\term{LMM}{Linear mixed model}
+\term{log}{Natural logarithm (base $e$)}
+\term{LR}{Likelihood ratio}
+\term{LRT}{Likelihood ratio test}
+\term{ML}{Maximum likelihood}
+\term{NHST}{Null hypothesis significance testing}
+\term{OR}{Odds ratio}
+\term{OSF}{Open Science Foundation}
+\term{PI}{Prediction interval}
+\term{PB}{Parametric bootstrapping}
+\term{Q-Q plot}{Quantile-quantile plot}
+\term{REML}{Restricted maximum likelihood}
+\term{RSS}{Residual sum of squares}
+\term{RT}{Reaction time}
+\term{SD}{Standard deviation}
+\term{SE}{Standard error}
+\term{SIF}{Standard error inflation factor}
+\term{TSS}{Total sum of squares}
+\term{VIF}{Variance inflation factor}
+\term{VOT}{Voice onset time}
+\term{\texttt{...}}{[omitted lines of R output]}
+%\term{$\sigma$}{(population) standard deviation}
+%\term{$s$}{sample standard deviation}
+%\term{$\mu$}{}
+
+\end{glossary}
+
+%%%%%
+%  ie
+% \begin{glossary}
+% \term{Absolute Zero}{
+% The lowest temperature possible, equivalent to -273.15°C (or 0° on the
+% absolute Kelvin scale), at which point atoms cease to move altogether
+% and molecular energy is minimal. The idea that it is impossible,
+% through any physical process, to lower the temperature of a system to
+% zero is known as the Third Law of Thermodynamics.}
+% ...
+% \end{glossary}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% End Book Exercises / \exer{}, \subexer{}, \sidebysidesubexer{}{}
+%% \sidebysidesubsubexer{}{} are the same as with exercises, only
+%% \begin{endbookexercises}... \end{endbookexercises} is different
+%%  at the end of the book.
+
+% \begin{endbookexercises}
+% \exer{}
+% \subexer{}
+% \sidebysidesubsubexer{}{}
+% \end{endbookexercises}
+
+%%%%%
+%  ie
+
+% \begin{endbookexercises}
+% \exer{For Hooker's data, Exercise 1.2, use the Box and Cox and Atkinson procedures to determine a appropriate transformation of PRES
+% in the regression of PRES on TEMP. find $\hat\lambda$, $\tilde\lambda$,
+% the score test, and the added variable plot for the score. 
+% Summarize the results.}
+
+% \subexer{The following data were collected in a study of the effect of dissolved sulfur
+% on the surface tension of liquid copper (Baes and Killogg, 1953).}
+
+% \sidebysidesubsubexer{In the case of $\Delta_1$?}{In the case of $\Delta_2$?}
+
+% \sidebysidesubexer{In the case of $\Gamma_1$?}{In the case of $\Gamma_2$?}
+% \end{endbookexercises}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Endnotes: \endnotes will make every \note{<text>} that was entered
+%% earlier in the book print here, with automatic sections for the
+%% particular chapter built in. See LinguisticsSample.tex/.pdf for example.
+
+%\endnotes
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Bibliography style should be mit-chicago, unless author
+%% has strong preference for another style.
+
+%%%%%
+%  ie
+%% 
+
+\bibliographystyle{mit-chicago}
+\bibliography{rmld}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Single and Multiple Indices
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% How to make single index     %%%
+%% 
+
+%% 1)
+%% type \usepackage{makeidx} after \documentclass
+%% and \makeindex before \begin{document}
+
+%% 2)
+  %% Then write \index{term} in the text whereever you want something 
+  %% indexed;
+  %% if you want subentries, you write the first entry followed by an
+  %% exclamation mark, i.e., \index{trees!pointy}, if you want a subsub
+  %% entry, follow the second entry with an exclamation mark too:
+  %% \index{trees!pointy!green}
+
+%% 3) 
+  %% Run LaTeX on the file. This will produce an .idx file.
+ 
+%% 4) 
+  %% Use the makeindx program to turn the .idx file into an .ind
+  %% file. Use the command makeindex <filename>, outside of LaTeX.
+  %% makeindex is a stand-alone program.
+
+%% 5) 
+  %% Write \printindex in your file, which will bring in
+  %% the new <filename>.ind, formatted in two columns.
+  %% You can edit <filename>.ind if you see anything that can
+  %% be improved. For instance, two identical entries, where only one is uppercase
+  %% and one lowercase can be changed to one entry.
+
+%\printindex
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% How to make multiple indices %%%
+
+% 1)
+%% before \begin{document}:
+%% \usepackage{multind}
+%% \makeindex{topics}
+%% \makeindex{authors}
+
+%% 2)
+%% Make index entries
+%% \index{authors}{Another Idiot}
+%% \index{topics}{FAQs}
+
+%% 3)
+%% To complete the job, run LaTeX on your file enough times that labels, etc., 
+%% are stable, and then execute the commands
+
+%% makeindex topics
+%% makeindex authors
+
+%% 4)
+% \printindex{authors}{Author Index}
+% \printindex{topics}{Topic Index}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Series Page entered after index or indices
+% \begin{seriespage}
+%  \seriestitle{}
+%  \serieseditor{}
+
+%% repeat often as needed
+%  \title{}
+%  \author{}
+
+%  \title{}
+%  \author{}
+%  \end{seriespage}
+
+% ie,
+% \begin{seriespage}
+% \seriestitle{Industrial Economics}
+% \serieseditor{Miriam Smith and Simon Rattle, editors}
+% \title{Engineering and Economics}
+% \author{Samuel Endgrove}
+% \title{Structural Economics: From Beginning to End}
+% \author{Guang Xi}
+% \end{seriespage}
+
+\end{document}

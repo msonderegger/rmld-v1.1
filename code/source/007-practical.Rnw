@@ -1,0 +1,2722 @@
+% !Rnw root = master.Rnw
+
+<<cache=FALSE, echo=FALSE>>=
+## trying this out to use num signif digits (which is what
+## tidy print does by default) instead of decimal
+options(knitr.digits.signif = TRUE)
+options(digits = 2)
+@
+
+\hypertarget{practical-regression-topics}{%
+\chapter{Practical regression topics}\label{chap:practical-regression-topics}}
+
+Thus far we have only fitted models with relatively simple structure: categorical predictors (`factors') with two levels, linear effects of continuous predictors,  and two-way interactions between such predictors. 
+%In practice more complex model structure is often needed to model linguistic data. 
+This chapter introduces tools for fitting and interpreting regression models which include factors with more than two levels (Section~\ref{sec:contrast-coding}--\ref{sec:omnibus-post-hoc}: contrast coding, omnibus and post-hoc tests), more complex interactions (Section~\ref{sec:interpreting-interactions}), or nonlinear effects (Section~\ref{sec:nonlinear-effects}).
+
+
+\section{Preliminaries}
+
+\subsection{Packages}
+
+We assume that you have loaded several packages from previous chapters, as well as the {splines} and {emmeans} packages \citep{emmeans}.  
+
+<<cache=FALSE, echo=1:7>>=
+library(tidyverse)
+library(broom)
+library(arm)
+library(languageR)
+library(performance)
+library(splines)
+library(emmeans)
+
+## not sure why these are needed
+filter <- dplyr::filter
+contrast <- emmeans::contrast
+## for plots
+library(patchwork)
+@
+
+\subsection{Data}
+\label{sec:french-cdi}
+
+We also assume you have reloaded the \ttt{vot\_michael} dataset from Section~\ref{sec:vot-dataset}, but now keeping \ttt{place} as a three-level factor,
+%(rather than simplifying to \tsc{labial}/\tsc{non\_labial}),
+so this dataset can be used to introduce multi-level factors. 
+
+<<>>=
+vot <- read.csv("data/vot_rmld.csv", stringsAsFactors = TRUE)
+# One speaker, first use of each unique word
+vot_michael <- filter(vot, speaker == "michael") %>%
+  filter(!duplicated(word)) %>%
+  mutate(place = fct_relevel(place, "labial")) %>%
+  droplevels()
+@
+
+We also recoded the levels of \tsc{place} to go in the theoretically-expected order \tsc{labial} $<$ \tsc{alveolar} $<$ \tsc{velar} (see Appendix.~\ref{sec:vot-data}).
+
+We will also need the young speakers subset of the \ttt{english} data  (Section~\ref{sec:lr-parameter-estimation}):
+<<>>=
+english_young <- filter(english, AgeSubject == "young")
+@
+
+
+% For physiological reasons, VOT is expected to increase as stops are pronounced further from the lips; this pattern is robustly attested across many languages \citep[e.g.,][]{cho1999vot}.
+
+% The code above uses the handy `compound assignment pipe' operator \ttt{\%<>\%} from \ttt{magrittr} (type \ttt{?'\%>\%'}): \ttt{x \%<>\% f} applies a a (series of) function(s) \ttt{f} to the object \ttt{x}, then saves the result as \ttt{x}.  In this case the 
+% 
+% <<eval=FALSE>>=
+% ## %<>% takes x, applies what comes after '%>%', then
+% ## updates x to be the result.
+% vot_michael <- vot_michael %>% mutate(place=fct_relevel(place, "labial"))
+% @
+
+\subsubsection*{The \ttt{french\_cdi\_24} dataset}
+
+
+
+
+% - Last line uses the handy XX operator from \ttt{magrittr} -- pass $x$ to function $y$, then save result as $x$.
+
+We also assume that you have loaded the French CDI dataset:
+<<>>=
+french_cdi_24 <- read_csv("data/french_cdi_24_rmld.csv")
+@
+
+This data comes from Wordbank, an  open database of children's vocabulary growth which aggregates data from thousands of parent-report questionnaires on lexical acquisition---the MacArthur Bates Communicative Development Inventory (CDI)---across many languages \citep{frank2020variability}.
+%\footnote{}
+%describes this remarkable resource in more detail; for our purposes 
+We extracted data for a small subset: Quebec French-learning children aged 24 months, for \Sexpr{length(unique(french_cdi_24$num_item_id))} words.
+\footnote{Wordbank is at \url{http://wordbank.stanford.edu/}. To make this dataset, item and instrument-level responses were downloaded for all available `WS' forms in Quebec French from Wordbank \citep{frank2017wordbank,boudreault2007macarthur,trudeau2011expressive} in September 2020, then restricted to words (gestures excluded), and combined with lexical measures
+%Lexical measures for this data
+(frequency, etc.) from 
+%which had been collected by 
+\citet{braginsky2019consistency}.
+%were downloaded  from 
+%the materials for this paper at
+%\url{https://github.com/mikabr/aoa-prediction/} (file \ttt{uni\_model\_data.RData}). 
+We thank Mika Braginsky for their help.}
+% Wordbank page says to cite in this way:
+% http://wordbank.stanford.edu/contributors
+
+%(the `WS' list).\
+
+
+Each row corresponds to one word, from a single child (\ttt{data\_id}).
+%aged 24 months. (We restrict just to children of this age for feasibility)
+%of age \ttt{age} (in months).  
+The column \ttt{produces} is 1 if the parent reports the child can produce this word (column \ttt{definition}) and 0 otherwise; this is a proxy for whether the child `knows' the word.  Of interest is how a word's likelihood of being known is predicted by the child's age (and gender, etc.) and properties of the word such as its  \ttt{lexical\_class} (levels: \tsc{function\_words}, \tsc{verbs}, \tsc{adjectives}, \tsc{nouns}, \tsc{other}).  Broadly speaking, children are thought to acquire nouns earlier than predicates (verbs/adjectives) earlier than function words.  This is commonly summarized as `noun bias' (nouns acquired earliest); \citet[][chap. 11]{frank2020variability} argue from the Wordbank data that `function word bias' (function words acquired latest) is an even more robust generalization across languages.
+
+
+% - The basic pattern is: nouns acquired earlier than predicates (verbs, adjectives, adverbs) than closed class words, in many languages---`noun bias'. Quantified as \ttt{lexical\_class}, ordered in `expected' direction   Frank et al study this across many kids in many languages; here we consider just one kid, at one age (24 months), excluding the `other' category to get four levels of \ttt{lexical\_class}, which we order from least to most `verb-like': \tsc{function\_words}, \tsc{verbs}, \tsc{adjectives}, \tsc{nouns}.
+
+For this chapter, we restrict to data from a single child (\ttt{data\_id} 140275), so that observations are independent.  Of interest is how \ttt{lexical\_class} affects the probability the child can produce this word; Figure~\ref{fig:cc_emp_1} (right) shows the empirical pattern. For simplicity we exclude \tsc{other} words, and reorder \ttt{lexical\_class} to the theoretically-expected order:
+
+<<>>=
+french_cdi_24 <- filter(french_cdi_24, data_id == 140275) %>%
+  filter(lexical_class != "other") %>%
+  mutate(lexical_class = fct_relevel(
+    lexical_class, "function_words",
+    "verbs", "adjectives", "nouns"
+  )) %>%
+  droplevels()
+@
+
+% - So each row is one word for this kid  We'll be using as an example pattern of lexical class -- Figure~\ref{fig:cc_emp_1} (right): each word is 0/1, for whether kid can produce it or not (parent report, `WS' score).  
+
+%The `noun bias' : more noun-like words are acquired earlier, on average.
+
+
+\section{Multi-level factors: Contrast coding}
+\label{sec:contrast-coding}
+
+As running examples of a factor $x$ with $k > 2$ levels in regression models, we use the effect of \ttt{place} on VOT ($k=3$) in the \ttt{vot\_michael} data, and the effect of \ttt{lexical\_class} on word production ($k=4$) in the \ttt{french\_cdi\_24} data.  
+
+There are two broad approaches to understand ``how does $x$ affect the response?'':
+
+\begin{enumerate}
+\item  \emph{Contrast coding} (Section~\ref{sec:contrast-coding}): A factor with $k$ levels corresponds to $k-1$ predictors in a regression model, the \emph{contrasts}.
+%-%--intuitively, independent questions we can ask about how the $k$ groups %differ---which are called \emph{contrasts}, introduced below. 
+By examining the model's results for each contrast, the researcher addresses $k-1$ questions about how the factor affects the response.
+%---which may be tailored to the research questions (but need not be).
+
+\item \emph{Omnibus/post-hoc tests} (Section~\ref{sec:omnibus-post-hoc}): First ask, ``do levels [significantly] differ at all?'' (using an `omnibus test'); if so, apply additional  hypothesis tests to dig into which levels [significantly] differ (using `post-hoc tests'), correcting for multiple comparisons.   
+
+%As usually applied (`pairwise comparisons') this approach is also agnostic to the the actual research questions to be addressed with the model. (For example, to study the `noun bias' we would only need to know how nouns compare with each other level, not how each pair of levels differs.)
+
+\end{enumerate}
+
+The contrast coding approach is more relevant for addressing research questions using regression models, while the omnibus/post-hoc test approach is more common in current practice (especially for  ANOVA analyses).
+%The omnibus/post-hoc approach is more common, and This approach is agnostic to exactly how $x$ is coded in the regression model. is agnostic to The other approach uses this coding. 
+The line between these approaches is blurry, and it is often useful to combine methods for a more flexible approach (e.g.,\ interpreting interactions: Section~\ref{sec:interpreting-interactions}),  But it's useful to keep them conceptually separate to understand how they are used in practice in many papers (Box~\ref{box:factors-terminology}).
+
+% 
+% 
+% For example, two-level factors we have seen so far correspond to a single contrast; the corresponidng question is, ``do levels 2 and level 1 differ?'' For \ttt{place}, the default contrasts (in R) correspond to ``do \tsc{labial} and \tsc{alveolar} stops differ?'' and ``do \tsc{labial} and \tsc{velar} stops differ?''.
+
+
+
+% 
+% - A factor with $k$ levels = $k-1$ degrees of freedom--intuitively, independent questions we can ask.
+% 
+% - Factors index `groups' of observations.  Ways we could ask, `what effect does the factor have?':
+% 
+% -- Do groups differ at all?
+% 
+% -- Specific hypothesis about differences between levels (e.g., `is VOT greater for labial than for non-labials?')
+% 
+% - One approach, which we cover first (Sec XX): define $k-1$ \emph{contrasts}: `planned' hypotheses you want to test about how the factor affects the response (\#1).
+% 
+% - The other approach, cover next (Sec XX): ask `do levels differ at all?' (`omnibus test': \#2), then apply hypothesis tests to dig into which levels differ (`post-hoc tests': \#3), correcting for multiple-comparisons. 
+% 
+% - In current practice each approach is often used---but it's good to keep them conceptually separate to understand the terminology (Box ...)
+% 
+% - It is often more useful to combine methods 1--3 for a more flexible approach, especially for interpreting interaction terms including a factor, etc.  Sec XX: examples.
+
+
+\begin{boxedtext}{Broader context: Terminology for multi-level factors}
+\label{box:factors-terminology}
+
+The terminology for  multi-level factors in regression modeling (at least in linguistics and psychology), and the divide into two `approaches' described above, come from the most common use case historically: a classic experiment testing for differences between groups, analyzed using ANOVAs, with the statistical analysis decided before data is collected.  This makes the terminology confusing if you have not had a traditional `psych stats' training or don't often analyze data from this use case (like me).
+But the terminology is so widely used 
+%(even for data which is far from this use case)
+that it is useful to know the context (e.g., \citealp[][\S10.4]{field2012discovering}).  
+%% FUTURE: read more widely to make sure this is all correct, and give better references.
+
+Suppose you are doing a classic experiment: there are $k$ groups, and of interest is whether the groups differ in the response $y$. (Note that the `groups' could be a control and several treatments, four groups differing in two between-subject manipulations (a `2x2 design'), etc.) An example would be a phonetic study of how \ttt{place} affects \ttt{vot} for a new language. You must decide how to do the statistical analysis before collecting data, and your analysis can ask $k-1$ independent questions about how groups differ. There are two ways you could analyze the data.
+
+First, you could pre-specify a single question---do groups differ at all?---which you test with an ANOVA (or a model comparison, in the regression setting).  If they do, you carry out additional hypothesis tests (e.g.,\ $t$-tests, in the ANOVA setting) to see exactly how groups differ---typically by `pairwise' comparisons (every possible pair of levels: \tsc{labial}/\tsc{alveolar}, etc.), adjusting $p$-values for multiple comparisons.  These additional tests are \textbf{post-hoc}---you did not specify them in advance to test specific research hypotheses.
+
+Alternatively, you could define the $k-1$ comparisons you are going to test, to address specific research hypotheses (e.g.,\ ``do \tsc{labial} and \tsc{alveolar} differ?'', ``do \tsc{alveolar} and \tsc{velar} differ?''), before you collect the data---these are \emph{planned comparisons} (or `planned contrasts').  You carry out the corresponding hypothesis tests (in one multiple regression, or with $k-1$ $t$-tests), without correcting for multiple comparisons, and report their results.
+
+This all makes sense, until you move outside the assumptions of this `classic' setting: that every test is either `planned' or `post-hoc', and that this lines up with whether a test is targeted to address research questions or is agnostic to them.  In a more flexible data analysis workflow with both exploratory and confirmatory analysis---which is common in practice (Section~\ref{sec:eda-cda}) both for observational and experimental data---the line between `planned' and `post-hoc' is not so clear.
+analagously to the division between exploratory and confirmatory data analysis .  
+As discussed below, we might choose a contrast coding scheme not to address research questions, but because it helps with model interpretation (e.g.,\ contrasts are `centered', or reflect the empirical pattern observed in the data)---are these `planned', or `post-hoc' comparisons?  And do we need to correct for multiple comparisons if the contrasts weren't `planned'? And so on.
+
+%if there are only $k-1$ contrasts? 
+
+%
+My opinion is that researchers should be aware of the general issues, rather than following strict rules: how $k$-level categorical predictors are coded into $k-1$ numeric predictors, hypothesis testing in this setting, the logic of correcting for multiple comparisons, and especially `researcher degrees of freedom'---the more ways you analyze your data, the less your $p$-values mean \citep{simmons2011false,roettger2019researcher}.
+%% FUTURE: JPK points out this is a much bigger issue than df adjustments for post-hoc tests, though the same logic applies.  shouldl really be discussed in an earlier chapter.
+\end{boxedtext}
+
+\subsection{Background}
+
+For exposition of contrasts, which describe comparisons between levels of a factor, it is useful to introduce this notation \citep{bolker2019contrasts}:
+$$
+\mu_i = \text{the model-predicted value for level $i$}
+$$
+
+We also use  $\mu_i$ to mean the value's approximation from the empirical data (the average of $y$ for observations in level $i$). For example, for \ttt{vot}, $\mu_1$ and $\mu_2$ are the average VOT for \tsc{labial} and \tsc{velar} stops.
+
+We also need to define the average value of $y$ for a factor---e.g.,\ `the average of \ttt{place}'.
+%as opposed to its average for a specific level ($\mu_i$).  
+This is often called the `grand mean', and can be defined in two ways \citep[e.g.,][\S8.3.1]{cohen2002applied}:
+\begin{itemize}
+\item \emph{Weighted (grand) mean}: the average of $y$ across the dataset
+\item \emph{Unweighted (grand) mean}: the average of the averages of $y$ for each level of the factor (i.e.,\ the average of $\mu_1$, $\mu_2$...)
+\end{itemize}
+
+For the \ttt{vot} example ($y$ is \ttt{vot}), these two means are:
+
+<<>>=
+vot_means <- vot_michael %>%
+  group_by(place) %>%
+  summarise(m = mean(vot), n = n()) %>%
+  summarise(weighted = weighted.mean(m, n), unweighted = mean(m))
+vot_means
+@
+
+For \emph{balanced} data, where there are an equal number of observations per factor level, the weighted and unweighted means are the same, and it is fine to say just `grand mean'.  But for unbalanced data (which most linguistic data is), the weighted mean will be skewed towards levels that have more observations.  Often it is useful to consider the unweighted mean---which estimates what the grand mean \textbf{would} be, if the data were balanced.  The terminology is confusing,
+%(Box~\ref{box:means-terms}), 
+and it is common to use `grand mean' to mean either or both of the above (as we do as well, when the meaning is clear).
+
+% Removed: Michaela suggestion, main point already addressed
+% \begin{boxedtext}{Broader context: Terminology for means}
+% \label{box:means-terms}
+% 
+% The terminology used for averages in the presence of categorical variables---which is most data, in practice---is surprisingly confusing, so I will spell out my understanding.
+% %in case it can save you an hour at some point.
+% Let  $\mu_1, \ldots, \mu_k$ be averages of $y$ for the $k$ levels of a factor, with $n_1, \ldots, n_k$ observations per group---which add up to $n$.  Then there are two ways we could calculate `the mean' of $y$ taking into account the groups \citep[e.g.,][\S8.3.1]{cohen2002applied}:
+% $$
+% \text{unweighted}: \mu_{U} = \frac{\sum_{i=1}^{k}\mu_i}{k}, \quad
+% \text{weighted}: \mu_{W}  = \frac{\sum_{i=1}^{k}\mu_i n_i}{\sum_{i=1}^{k} n_i}
+% $$
+% 
+% Note that the `weighted' option, where each group's average is weighted by its number of observations, is just the same as averaging the $n$ observations without regard to what group they come from. The two options are the same for balanced data.  The term `grand mean' is often used, but is ambiguous for unbalanced data---different authors use it to mean either or both of $\mu_U$ and $\mu_W$ ($\mu_W$ would be more standard), perhaps because most presentations focus on the case of balanced data, where the distinction doesn't matter. So it is best to be precise (`unweighted grand mean' or `weighted grand mean'), or just not use it.
+% 
+% \end{boxedtext}
+
+
+
+% For exposition of what contrasts mean in terms of levels of a factor, it is useful to introduce this notation \citep{bolker2019contrasts}:
+% 
+% $$
+% \mu_i = \text{the model-predicted value for level $i$}
+% $$
+% 
+% Contrasts capture the relationship between these values and the regression coefficients: $\beta_0$ for the intercept, and $\beta_i$ for the $i$th contrast.  Using this notation for the example above: 
+
+
+
+
+
+\subsection{Contrast coding: Introduction}
+\label{sec:contrast-coding-intro}
+
+In a regression model, a factor $x$ with $k$ levels corresponds to $k-1$ numeric predictors called \emph{contrasts}, which capture hypotheses/questions about how the response differs between groups.  There are different ways of mapping \(k\) levels into \(k-1\) predictors (\emph{contrast coding schemes}), corresponding to different sets of hypotheses.   Importantly, choosing different contrast coding schemes for $x$ results in \textbf{equivalent models}, which make the same predictions, but whose coefficients have different interpretations.
+%corresponding to the hypotheses being tested.
+
+For example, for the predictor \ttt{place} (levels = \tsc{bilabial}, \tsc{alveolar}, \tsc{velar}), the two questions might be:
+\begin{itemize}
+\item What is the difference between \tsc{bilabial} and \tsc{alveolar}? Between \tsc{bilabial} and \tsc{velar}?
+\item \textbf{or}: What is the difference between \tsc{bilabial} and non-\tsc{bilabial} stops? Between  \tsc{alveolar} and \tsc{velar}?
+\end{itemize}
+
+Only $k-1$ contrasts (here, 2 contrasts) can be included in a model in order for these predictors to not be linearly dependent---the intercept is the $k$th degree of freedom. {As a result, contrasts never correspond to $y$ at a certain level of $x$ (e.g., ``\ttt{vot} when \ttt{place}=\tsc{bilabial}'')---they always correspond to differences between levels. This is a frequent point of confusion.}
+
+Choosing a contrast coding scheme for $x$ fixes the interpretation of
+the regression coefficients for $x$ (in terms of levels of $x$, like, `\ttt{alveolar} $-$ \ttt{bilabial}'), and the intercept term.
+Thus, how to interpret the regression coefficients corresponding to a factor 
+%(and the intercept) 
+depends on the coding scheme, so some understanding of contrast coding is essential for interpreting regression models.  
+%Thus, \textbf{the meaning of the intercept and the meaning of the regression coefficients corresponding to $x$  depends on the coding scheme}.
+
+Different schemes are used in practice, with two broad motivations: 
+\begin{enumerate}
+\item \textbf{Matching model structure to research questions}, by choosing contrasts which test focused hypotheses
+\item \textbf{Practical considerations}: model interpretability, minimizing unnecessary collinearity, and ease of fitting (for more complex models)
+\end{enumerate}
+
+(1) is more important, but also case-specific---this is the focus of most introductions to contrast coding (e.g.,\ \citealp{schad2020capitalize}; \citealp[][chap.\ 8]{cohen2002applied}).\footnote{\citealp[][303]{cohen2002applied} advises that ``researchers should choose the coding system that provides information that most directly addresses their substantive research questions.''}
+%comprehensive introduction to contrast coding using linguistic examples, which I highly recommend.  
+Choosing the right contrasts greatly improves the model's utility for addressing research questions, and also raises statistical power by requiring fewer hypothesis tests.  We focus on (1) only when discussing constructing a custom coding scheme, but in practice many research questions can be mapped into the commonly-used schemes (Helmert, etc.).
+
+
+Our discussion focuses more on  (2),
+%Here we first exemplify a few commonly-used coding schemes, using the \ttt{vot\_michael} and \ttt{french\_cdi} examples.  \citet{schad2018capitalize} gives a more comprehensive introduction using linguistic examples.
+because these considerations apply to \textbf{any} model containing categorical variables (you always have to choose a contrast coding scheme), and in practice the coding scheme used greatly affects model fitting and interpretability for more complex models (e.g.,\ mixed-effects models) so it is good to become familiar with the issues using simpler models.
+
+We first exemplify a few commonly-used `standard' coding schemes, then show how to construct a custom coding scheme, using the empirical cases shown in Figure~\ref{fig:cc_emp_1} (for the  \ttt{vot\_michael}, \ttt{french\_cdi\_24} data).
+
+
+%% FUTURE: revisit writing here... seems wordy and not necessarily in the right  order
+
+% In reality (1) is the more important motivation, but it is also case-specific---this is the focus of the Schad et al. tutorial, which I highly recommend. 
+% 
+% Here we exemplify a few commonly-used coding schemes; \citet{schad2018capitalize} gives a more comprehensive introduction using linguistic examples. 
+% 
+% 
+% (1) is more important, but also case specific---this is the focus of the Schad et al. tutorial, which I highly recommend.
+% 
+% - We've so far mostly focused on (2), because it applies to *any* model containing categorical variables (you always have to choose a contrast coding scheme). But (1) is more important -- just case-specific. This is the focus on Schad et al tutorial; we discuss more briefly.  
+% 
+% 
+
+
+
+% This makes contrast coding a powerful and useful tool---by allowing the analyist to match the model structure to her hypotheses---but also confusing, because the meaning of the regression coefficients depends on the coding scheme used. Here we exemplify a few commonly-used coding schemes; \citet{schad2018capitalize} gives a more comprehensive introduction using linguistic examples. 
+% 
+% (perhaps update to state the two motivations for contrast coding, up front---sketched out below under custom scheme. then can say, we first cover some specific schemes, then custom, and say to read schad for better discussion of custom.)
+% 
+% 
+% (actually this could go in introduction to contrast coding?)
+% 
+% - Two motivations behind choosing a contrast coding scheme: testing focused hypotheses from RQs, and practical considerations (model interpretability, unnecessary collinearity, ease of fitting).
+% 
+% - We've so far mostly focused on (2), because it applies to *any* model containing categorical variables (you always have to choose a contrast coding scheme). But (1) is more important -- just case-specific. This is the focus on Schad et al tutorial; we discuss more briefly.  Greatly improves model utility for addressing RQs, and also raises statistical power (e.g., Cohen et al 2002 340) by requiring fewer tests.
+
+%Our examples use the empirical cases in Figure~\ref{fig:cc_emp_1} (left).
+
+<<cc_emp_1, echo=FALSE, out.width='90%', fig.width=default_fig.width*.9/default_out.width, fig.asp=.34, fig.cap='Left: \\ttt{vot} as a function of \\ttt{place} (means with bootstrapped 95\\% CIs) for the \\ttt{vot\\_michael} data. Right: proportion (with exact 95\\% CIs) of words produced (\\ttt{produces}) as a function of \\ttt{lexical\\_class} for the \\ttt{french\\_cdi\\_24} data. Dotted lines are averages across all observations.'>>=
+## needed to calculate exact binomial confidence intervals
+library(binom)
+
+p1 <- vot_michael %>% 
+  ggplot(aes(x = place, y = vot)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  geom_hline(aes(yintercept = mean(vot)), lty = 2) +
+  ylab("VOT (msec)") +
+  xlab("Place of articulation")
+
+lexical_class_df <- french_cdi_24 %>%  group_by(lexical_class) %>% summarise(n=n(), s=sum(produces==1)) %>% split(.$lexical_class) %>% map(~binom.confint(.$s, .$n, methods = c('exact'))) %>% bind_rows(.id='lexical_class') %>%
+  mutate(lexical_class = fct_relevel(
+    lexical_class, "function_words",
+    "verbs", "adjectives", "nouns"
+  ))
+
+p2 <- lexical_class_df %>% ggplot(aes(x=lexical_class, y=mean)) +
+  geom_pointrange(aes(ymin=lower, ymax=upper)) +
+  geom_jitter(aes(x=lexical_class, y=produces), size=0.25, width=0.1, height=0.04, data=french_cdi_24, alpha = .5) + 
+  geom_hline(aes(yintercept = mean(french_cdi_24$produces)), lty = 2) +
+  xlab("Lexical class") +
+  ylab("Proportion produced") 
+  
+p1 + p2 + plot_layout(widths = c(2,3))
+@
+
+
+
+\subsection{Treatment coding}
+
+The default in R is \emph{treatment coding}, also known as \emph{dummy coding}. In treatment coding of a factor with $k$ levels, the intercept corresponds to level 1, the first contrast corresponds to level 2 minus level 1, the second contrast to level 3 minus level 1, and so on. The idea is that level 1 is the `control', and each subsequent level is a `treatment' which is compared to the control. 
+
+
+
+For example, consider a linear regression of \ttt{vot} as just a function of \ttt{place} for the \ttt{vot\_michael} data:
+
+<<>>=
+vot_cc_mod_1 <- lm(vot ~ place, data = vot_michael)
+tidy(vot_cc_mod_1)
+@
+
+The \ttt{place} predictor by default is mapped to two contrasts---the \ttt{placealveolar} and \ttt{placevelar} rows.  Each one is a numeric predictor, whose coefficient therefore has an estimate and standard error (and has a test statistic and $p$ from a $t$-test).
+
+To verify the interpretation of these contrasts (and the intercept), consider the mean \ttt{vot} for each level of \ttt{place} in this data:
+
+<<>>=
+vot_michael_place_summ <- vot_michael %>%
+  group_by(place) %>% summarise(mean_vot = mean(vot)) %>%
+  column_to_rownames("place")
+vot_michael_place_summ
+@
+
+The model's coefficient estimates are the same as:
+\begin{enumerate}
+\item The mean for \tsc{labial} stops (\ttt{(Intercept)} coefficient)
+\item The difference in means for \tsc{alveolar} and \tsc{labial} stops (coefficient \ttt{placealveolar}: \Sexpr{coefficients(vot_cc_mod_1)[['placealveolar']]} = \Sexpr{vot_michael_place_summ['alveolar','mean_vot']} $-$ \Sexpr{vot_michael_place_summ['labial','mean_vot']})
+\item The difference in means for  \tsc{velar} and \tsc{labial} stops (coefficient \ttt{placevelar}).
+\end{enumerate}
+
+\subsection{Implementation}
+
+In R, contrasts are specified in a \emph{contrast matrix} showing the mapping from the \(k\) levels to the \(k-1\) numeric predictors (the contrasts). For the example above:
+
+<<>>=
+contrasts(vot_michael$place)
+@
+
+There are two numeric predictors: The first is 1 for \tsc{alveolar} observations and 0 otherwise. The second is 1 for \tsc{velar} observations and 0 otherwise.  There is always an implicit additional column of 1's, because the intercept is 1 for every observation.\footnote{By default R gives the $k$th contrast the name of the $k+1$st level.  This is confusing, but standard---often contrasts are just reported as \tsc{level-name} in papers, with the convention that treatment coding is being used so the contrast means `difference between this level and level 1'.}
+
+Here are the first few rows of the \emph{design matrix}, which is what a model containing a categorical variable uses under the hood---a matrix where each column is the values of a single predictor across all observations and each row is one observation:
+
+<<output.lines=1:5>>=
+model.matrix(vot_cc_mod_1)
+@
+
+Compare to the first few rows of the actual data we inputted to the model:
+<<output.lines=1:4>>=
+model.frame(vot_cc_mod_1)
+@
+
+The first observation has \ttt{place}=\tsc{velar}. This is mapped into three predictors: the intercept and two numeric predictors whose values are 0 and 1 (the \tsc{labial} row of the contrast matrix).  
+
+Note that for a \textbf{two-level} factor ($k=2$), using treatment coding is equivalent to converting the factor to a numeric variable with values 0 and 1 (Box~\ref{box:two-level-factors}). 
+
+
+
+\begin{boxedtext}{Practical note: Two-level factors}
+\label{box:two-level-factors}
+
+Examples in this chapter use factors with three or more levels ($k > 2$). In previous chapters we included any two-level factor $x$ in models by first converting to numeric predictors---and optionally standardizing (Section~\ref{sec:centering-scaling}).  What happens if $x$ is  left as a two-level factor?
+
+Depending on the coding scheme chosen, $x$ corresponds to a single contrast whose interpretation is `the difference between level 2 and level 1'---possibly multiplied by a constant.  (In R, treatment/Helmert/sum contrasts correspond to 1/0.5/-1 times $(\mu_1 - \mu_2)$, which is confusing.) The intercept corresponds to the different meanings of 0 under different standardizations of a binary predictor (Box~\ref{box:standardizing}): \tsc{level 1} (treatment coding = no standardization), the average of \tsc{level 1} and \tsc{level 2} (Helmert, sum coding: set 0/1 to -0.5/0.5), or their weighted average (weighted Helmert: transform to 0 and 1, then subtract the mean, as in our `rescaling').
+% 
+% \begin{tabular}
+% 
+% Treatment & $\mu_2 - \mu_1$ & no standardization \\
+% Helmert, Sum & $\half (\mu_2 - \mu_1) $&  subtract the mean \\
+% Weighted Helmert & (\mu_2 - \mu_1) & 
+% 
+% 
+% In any contrast coding scheme, $x$ corresponds to a single contrast whose coefficient is ``the difference between level 2 and level 1'' ($\mu_2 - \mu_1$)---possibly multiplied by a constant. (In R's implementation, the contrast is $\mu_2 - \mu_1$ for dummy coding and $\half (\mu_2 - \mu_1)$ for Helmert coding.)
+% 
+% The interpretation of the intercept, and thus whether the coding scheme is `centered', differs by coding scheme:
+% 
+% \begin{itemize}
+% 
+% \item Treatment coding: intercept = \tsc{level 1}, equivalent to coding 
+% 
+% \item 
+% 
+% \item 
+% \end{itemize}
+% 
+% \begin{tabular}{ccc}
+% 
+% Dummy & level 1 
+% \end{tabular}
+% in dummy coding, 
+% 
+% - what differs is the *intercept* (and thus whether the coding scheme is `centered').  dummy coding: intercept = level 1 (equivalent to coding as 0/1).  Helmert, sum: intercept = grand mean (equivalent to coding as -1/1 or -0.5, 0.5).  
+% weighted Helmert: transform to 0/1 then subtract mean---same as our `rescaling'.
+\end{boxedtext}
+
+
+
+\subsection{Centered and orthogonal contrasts}
+
+Treatment coding is the most traditional coding scheme for a categorical variable $x$, and easiest to understand, but it lacks two important properties. 
+
+First, the contrasts are not \emph{centered}: since each column of the contrast matrix is just 0s and 1s, each contrast won't average to zero across the dataset. A coding scheme is `centered' when the entries in each column of the contrast matrix sum to zero. (This means the contrast will have mean 0 for `balanced' data, where there are an equal number of observations for each level.)  When this is the case, the intercept is  interpretable as the (unweighted) grand mean across the dataset, e.g.,\ `average of \ttt{vot} across \tsc{labial}, \tsc{alveolar}, and \tsc{velar}'.  This is in line with the main motivation for centering for predictors discussed previously (Section~\ref{sec:centering-scaling}): interpretability of the intercept and of of main effects in the presence of interactions.  In dummy coding, the intercept  is \tsc{level 1}, which  is often not of direct interest.
+% FUTURE: JPK points out, not a good example for this -- in VOT case the intercept would be of interest; it's "treatment" effects and "grand mean" which aren't of interest.
+
+Second, the contrasts are not \emph{orthogonal}: the contrasts are correlated across the dataset, meaning that knowing the value of one contrast gives you information about others. For the VOT example, if we tell you that the first contrast is 1 for an observation, you already know the value of the second contrast (it must be 0, since the observation can only be \tsc{alveolar} if the first contrast is 1). Non-orthogonal contrasts implies there will be collinearity between predictors for no good reason (`nonessential collinearity': Section~\ref{sec:collinearity-diagnostics}), since the contrasts encode $x$ using $k-1$ dimensions, and we \textbf{could} choose these dimensions to be independent. 
+%$k-1$ independent facts.  
+  Formally, contrasts are orthogonal (or `independent') when the correlation between any two columns of the contrast matrix is 0.\footnote{If you know some linear algebra: this condition is more commonly stated as ``when the dot product of any two columns is zero'' (see \citealp{schad2020capitalize} for details).}  In this case, any pair of contrasts is uncorrelated across the dataset for balanced data. (Unbalanced data is addressed in Section~\ref{sec:weighted-helmert})
+  %(Vectors $\vec{x}$ and $\vec{y}$ are `orthogonal' if their dot product is zero.)
+% FUTURE: simplify this paragraph (and next)... repetitive and in weird order?
+
+These two properties---being centered and orthogonal---are the `practical reasons' referred to above to choose a contrast coding scheme (Section~\ref{sec:contrast-coding-intro}).  Since treatment coding lacks both properties, it is not recommended to use this coding scheme without good reason (i.e.,\ level 1 is a control group of direct interest, to which others are compared).
+%, though see `simple coding' below).  
+Instead it is best to use a coding scheme where contrasts are centered, and ideally orthogonal.
+
+\subsection{Interpretations of contrasts}
+\label{sec:contrast-interp}
+
+Above, we just stated that the contrast matrix \ttt{contr.treatment(3)} is equivalent to the following interpretation of the intercept and contrasts,  in terms of factor levels:
+\begin{align}
+\beta_0 & = \mu_1 \label{eq:treatment} \\
+\beta_1 & = \mu_2 - \mu_1 \nonumber \\
+\beta_2 & = \mu_3 - \mu_1 \nonumber
+\end{align}
+
+% ---given in Eq.~\ref{eq:treatment}---corresponds to this contrast matrix:
+%the interpretation of treatment contrasts are, meaning that this contrast matrix:
+
+%intercept and contrasts are when a three-level factor is coded with treatment coding, meaning this contrast matrix:
+
+% <<>>=
+% contr.treatment(3)
+% @
+
+
+% It is not obvious why this is the case, and in general you cannot read off the interpretation of each contrast (or the intercept) from the contrast matrix.  It is not so important to understand why (Box ...), but it is very useful to know how to go back and forth between the contrast matrix and the interpretations of the contrasts/intercept in terms of factor levels. 
+
+
+%It is not obvious why this matrix leads to the interpretation `the intercept is level 1', `the first contrast is level 2 minus level 1', and so on.  In general you cannot read off the interpretation from the contrast matrix. 
+
+This is not obvious---in general the interpretation of the contrasts does not follow from the `contrast matrix'.\footnote{For orthogonal contrasts the columns of the contrast matrix does correspond to the contrasts' interpretations, up to a constant.}
+%(REF Schad).}
+It's not so important to understand why (Box~\ref{box:contrast-interpretations}), but it is very useful to know how to go back and forth between the contrast matrix and the `interpretation matrix'---where each row shows how to interpret one contrast (or intercept) in terms of group means.
+
+To do this, we add a column of 1's to the contrast matrix, then take its inverse (e.g., using \ttt{solve()}).  
+%\emph{generalized inverse}; (e.g.,\ \ttt{ginv} in the \ttt{MASS} package).  
+For the VOT example:
+
+<<>>=
+cMat <- solve(cbind(1, contrasts(vot_michael$place))) %>% fractions()
+cMat
+@
+
+(The \ttt{fractions()} function from {MASS} is just to clean up the output.)
+In this matrix, the first row corresponds to the interpretation of the intercept, and subsequent rows to the interpretation of the contrasts; each column is one factor level.  Let's add some labeling to be clearer:
+
+<<>>=
+rownames(cMat) <- cbind("Intercept", "contrast1", "contrast2")
+cMat
+@
+The interpretation of each row is:
+\begin{itemize}
+\item Intercept: \tsc{labial} ($1\cdot \tsc{labial} + 0 \cdot \tsc{alveolar} + 0 \cdot \tsc{velar}$)
+
+\item Contrast 1: $\tsc{alveolar} - \tsc{labial}$
+
+\item Contrast 2: $\tsc{velar} - \tsc{labial}$
+\end{itemize}
+You can get a similar matrix for any contrast matrix \ttt{x} using \texttt{solve(cbind(1, x))}.  
+
+More usefully, you can go in the opposite direction: specify the interpretation you want the intercept and contrasts to have, then take the  inverse of that matrix to determine the  contrast coding scheme which captures this interpretation. This \emph{inverse trick} is especially useful for defining custom contrast coding schemes.
+%Box~\ref{box:contrast-interpretations} explains why it works.
+%We give a simple example here and a more complex one below (Section~\ref{sec:custom-contrasts}).
+
+
+
+%\footnote{This works because the generalized inverse of the generalized inverse of $X$ is just $X$.} 
+
+\begin{boxedtext}{Broader context: Contrasts $\leftrightarrow$ interpretations}
+\label{box:contrast-interpretations}
+
+% 
+% Typically I would explain here why the inverse trick works, but I can't be any clearer than than 
+% 
+ \citet{bolker2019contrasts}'s online notes (or \citealp{schad2020capitalize}), which we summarize here, explain clearly why the inverse trick works.  The basic idea requires some linear algebra.
+%see  \citep{bolker2019contrasts}'s online notes (or \citealp{schad2020capitalize}) for a clear
+%Let $\vec{beta} = (\beta_0, \beta_1, \ldots)$ be a vector of the regression coefficients (intercept + the $k-1$ contrasts), and let $\vec{mu} = (\mu_1, \mu_2, \dots)$ be the  vector of group means.  
+We would like to know the matrix $C$ that describes what the regression coefficients (the intercept + the $k-1$ contrasts) mean in terms of group means:
+$$
+C 
+\begin{pmatrix}
+\mu_1 \\
+\mu_2 \\
+\vdots \\
+\mu_k
+\end{pmatrix}
+ = 
+ \begin{pmatrix}
+\beta_0 \\
+\beta_1 \\
+\vdots \\
+\beta_k
+\end{pmatrix}
+$$
+
+$C$ is a $k$ x $k$ matrix. For instance, for the treatment coding example, $C$ would be the 3x3 matrix \ttt{cMat}: the first row describes the intercept in terms of group means, and so on.  Multiplying both sides by the inverse of $C$, we see that $C^{-1}$ describes group means in terms of the coefficients---and the first column of $C^{-1}$ is all 1's (since the equation for every group mean includes $\beta_0$).  That is:
+ $$
+ \begin{pmatrix}
+\beta_0 \\
+\beta_1 \\
+\vdots \\
+\beta_k
+\end{pmatrix}
+=
+\underbrace{\begin{pmatrix}
+1 & & \\
+\vdots & M & \\
+1 & &
+\end{pmatrix}}_{C^{-1}}
+\begin{pmatrix}
+\mu_1 \\
+\mu_2 \\
+\vdots \\
+\mu_k
+\end{pmatrix}
+$$
+
+%(FUTURE  make M big)
+
+
+
+
+% 
+% = 
+% 
+% \begin{pmatrix}
+% 1 & & \\
+% \vdots & M & \\
+% 1 & & 
+% \end{pmatrix}
+% 
+% 
+% \begin{pmatrix}
+% \mu_1 \\
+% \mu_2 \\
+% \vdots \\
+% \mu_k
+% \end{pmatrix}
+% $$
+
+The `contrast matrix' in R is $M$: the $k$ x $(k-1)$ matrix, where each column is one contrast.
+
+Thus, to get $C$ from the contrast matrix, we add a column of 1's, then invert.  To get the contrast matrix corresponding to a given $C$, we invert, then remove the first column. 
+
+%$C$ and the contrast matrix are interchangeable; it is just an arbitrary choice that R requires us to specify the group means in terms of the coefficients (the contrast matrix) rather than the coefficients in terms of group means (which is more intuitive).
+
+
+% 
+% 
+% describe the contrasts for a factor $x$, one could (a) define what the coefficients mean ($\beta_0$, $\beta_1$, ...) in terms of group means ($\mu_1$, $\mu_2$, ...), as a matrix or (b) define group means in terms of the coefficients.  (a) is more intuitive (this is what we've referred to as `the interpretation' of the contrasts/intercept), but (b) is what R requires. Either (a) or (b) means specifying a matris
+% 
+% Let $C$ be the contrast matrix with a column of 1's added on the left, like this for the treatment coding example:
+% 
+% <<>>=
+% cbind(1, contrasts(vot_michael$place))
+% @
+% 
+% 
+% 
+% 
+% 
+% For the mathematical details of contrast coding, including why taking the generalized inverse gives contrast interpretations, see \citet{schad2018capitalize} or Section 6.2 of \citet{venables2002modern}.}
+
+
+
+
+\end{boxedtext}
+
+
+\paragraph{Example: Simple coding}
+%\label{sec:simple-coding}
+
+Sometimes it is useful in analyzing experimental data for the contrasts to have the `treatment' interpretation: level $i$ versus level 1. This makes the contrasts non-orthogonal, but there is no reason we can't center them.  This is called \emph{simple coding}: contrasts with the same interpretation as in treatment coding, but where the intercept is
+% makes the contrasts non-orthogonal, but we can at least center them.  This is called \emph{simple coding}
+% 
+% In simple coding, the intercept is 
+the (unweighted) grand mean.
+%(average of levels $1, \ldots, k$).
+
+% and the contrasts have the sample interpretation as in treatment coding.
+% 
+% -- \emph{simple coding}, the intercept is the grand mean (average of levels 1, 2, \ldots), but the contrasts have the same interpretation as in dummy coding.)
+
+There is no base R function to make simple contrasts, but we can use the inverse trick. To determine the simple coding contrast matrix for a factor with 3 levels, first make the matrix corresponding to the interpretations of the intercept (row 1 = grand mean) and contrasts (row $i$ = level $(i-1)$ minus level 1); then invert this matrix and remove the first column: 
+
+<<>>=
+interpMat <- t(matrix(c(1 / 3, 1 / 3, 1 / 3, -1, 1, 0, -1, 0, 1),
+  nrow = 3))
+interpMat
+# Remove the intercept column
+simpleCMat <- solve(interpMat)[, 2:3]
+simpleCMat
+@
+
+Now, re-run the model above with \ttt{place} coded with simple contrasts:
+
+<<>>=
+vot_michael$place_simp <- vot_michael$place
+contrasts(vot_michael$place_simp) <- simpleCMat
+update(vot_cc_mod_1, . ~ place_simp) %>% tidy()
+@
+
+The two rows corresponding to the contrasts are the same as in the original model, where the contrasts were treatment-coded, but the intercept is different.  Its estimate is the (unweighted) grand mean of \ttt{vot} (\Sexpr{vot_means[['unweighted']]}, from \ttt{vot\_means}).
+%---not identical because the data is unbalanced by \ttt{place}. 
+
+
+\subsection{Sum coding}
+
+Next, we consider \emph{sum coding} (a.k.a.\ `deviation coding', `effect coding'). For a factor with \(k\) levels, the interpretation of the intercept and contrasts are:
+\begin{itemize}
+\item Intercept: unweighted grand mean
+\item Contrast 1: \tsc{level 1} \(-\) unweighted grand mean
+\item Contrast 2: \tsc{level 2} \(-\) unweighted grand mean
+\item ...
+\end{itemize}
+Exercise~\ref{ex:sum-interp} asks you to verify using the inverse trick that sum contrasts have this interpretation.
+
+The \ttt{contr.sum()} function gives the contrast matrix in this case---for example, when $k=3$:
+<<>>=
+contr.sum(3)
+@
+(Note that the interpretation above is not obvious from the contrast matrix---as for treatment coding.)
+
+%---e.g.,\ \ttt{contr.sum(4)} for a factor with four levels (not shown). 
+
+For the \ttt{vot\_michael} example, let's define a version of \ttt{place} with this contrast matrix and refit the model:
+
+<<>>=
+vot_michael <- mutate(vot_michael, place_sum = place)
+contrasts(vot_michael$place_sum) <- contr.sum(3)
+update(vot_cc_mod_1, . ~ place_sum) %>% tidy()
+@
+
+The intercept estimate is the same as for simple coding, where the intercept was also the (unweighted) grand mean. The interpretation of the first and second contrasts are ``\tsc{labial} $-$ grand mean'' and ``\tsc{alveolar} $-$  grand mean,'' which can be verified by calculating these quantities from the empirical means:
+
+<<>>=
+## Unweighted grand mean
+gm <- vot_means["unweighted"]
+
+## Contrast 1
+vot_michael_place_summ["labial", "mean_vot"] - gm
+
+## Contrast 2
+vot_michael_place_summ["alveolar", "mean_vot"] - gm
+@
+
+Note the high $p$-value for the second contrast, meaning that \tsc{alveolar} stops aren't meaningfully different from the grand mean. This makes sense given the empirical data (Figure~\ref{fig:cc_emp_1} left).
+
+% These numbers are close to the coefficient estiamtes in the regression table. (They are not exactly the same because the data is unbalanced by \ttt{place}.)
+
+Sum contrasts have the advantage of being centered, 
+%\underline{centered} (intercept = grand mean),
+but are not orthogonal.
+%(the contrasts don't capture independent information).  
+This can be verified using the contrast matrix (e.g.,\ \ttt{contr.sum(4)}): each column sums to zero, but no two columns are uncorrelated.
+
+% 
+
+\subsection{Helmert Coding}
+
+We next consider \emph{Helmert coding}, where each contrast corresponds to the difference between level $k$  and the (unweighted) mean of the previous levels.\footnote{This coding scheme is sometimes also called \emph{reverse Helmert coding}, due to disagreement on which direction is `reverse', or \emph{difference coding}; in this case each contrast is the difference between level $k$ and the mean of subsequent levels.}
+
+
+As implemented in R (\ttt{contr.helmert()}), the interpretation of the intercept and contrasts are as above (level $k$ minus previous levels),
+%the interpretation above 
+but are scaled by constants:
+\begin{itemize}
+\item Intercept: unweighted grand mean
+\item Contrast 1: (\tsc{level 2} \(-\) \tsc{level 1}) $\cdot \frac{1}{2}$
+\item Contrast 2: (\tsc{level 3} $-$ 
+$\frac{\tsc{level 1} + \tsc{level 2}}{2}$) $\cdot \frac{1}{3}$
+\item Contrast 3: (\tsc{level 4} $-$ 
+$\frac{\tsc{level 1} + \tsc{level 2} + \tsc{level 3}}{3}$) $\cdot \frac{1}{4}$
+\end{itemize}
+
+As an example, let's use Helmert coding to model how a word's lexical class (\ttt{lexical\_class}) affects the probability it has been produced (\ttt{produces}), for the \ttt{french\_cdi\_24} data (the pattern in Figure~\ref{fig:cc_emp_1} right).
+
+<<>>=
+contrasts(french_cdi_24$lexical_class) <- contr.helmert(4)
+cdi_cc_mod_1 <- glm(produces ~ lexical_class, data = french_cdi_24,
+  family = "binomial")
+tidy(cdi_cc_mod_1, conf.int = TRUE) %>%
+  select(term, estimate, conf.low, conf.high)
+@
+
+The model's predictions for each \ttt{lexical\_class} are shown in Figure~\ref{fig:cc_pred_1}.  To get the intuition behind Helmert contrasts, we just focus on the sign of each coefficient estimate and its 95\% confidence interval.
+%(to avoid thinking about the constants, or $p$-values). 
+The intercept is the unweighted grand mean, intuitively ``the predicted log-odds  an average word is produced'', which is lower than chance.\footnote{What the unweighted grand mean means here is actually less intuitive: the average of the log-odds that \ttt{produces=1} in each group.}  The first contrast (row \ttt{lexical\_class1}) means ``\tsc{verbs} are more likely to be produced than \tsc{function\_words}''.  The second contrast means ``\tsc{adjectives} are more likely to be produced than (the average of) \tsc{verbs} and \tsc{function\_words}''.  The third contrast means ``\tsc{nouns} are more likely to be produced than non-\tsc{nouns}''.  We can be confident about the directions of these comparisons as no 95\% confidence interval includes 0.
+%(These comparisons are all significant at the $\alpha=0.95$ level.)
+
+Importantly, Helmert contrasts are both centered 
+%(intercept = grand mean) 
+and orthogonal: knowing the value of one contrast doesn't tell you anything about the value of another contrast.  For example, knowing that  \tsc{nouns}$>$non-\tsc{nouns} for this data (positive contrast 3 coefficient) tells you nothing about how different non-nouns compare (contrasts 1, 2).   
+
+% FUTURE: Interpretation corresponds to a left-branching `tree' often see put on barcharts--include in the model-prediction example in box below, which refer to later
+
+<<cc_pred_1, echo=FALSE, out.width='50%', fig.width=default_fig.width*.50/default_out.width, fig.cap='Model-predicted log-odds of word production as a function of lexical class, for the \\ttt{french\\_cdi\\_24} data.'>>=
+ggeffect(cdi_cc_mod_1)$lexical_class %>%
+  as_tibble() %>%
+  mutate(x = fct_relevel(x, levels(french_cdi_24$lexical_class))) %>%
+  ggplot(aes(x = x)) +
+  geom_pointrange(aes(y = logit(predicted), ymin = logit(conf.low), ymax = logit(conf.high))) +
+  xlab("Lexical class") +
+  ylab("Predicted log-odds")
+@
+
+These properties mean \textbf{Helmert contrasts are a good default}, from a practical perspective  (model interpretability, convergence).
+%and (when we get to more complex models) convergence, and minimizing unnecessary collinearity.  
+However they can be unintuitive to interpret, especially if you are used to thinking in terms of a `base value' (treatment contrasts); Box~\ref{box:helmert-details} gives context.  What is important is the general intuition (``level $k$ compared to previous levels'').
+
+
+\begin{boxedtext}{Broader context: Helmert contrasts---details}
+\label{box:helmert-details}
+
+% The intuition for each contrast can be read off from the contrast matrix:
+% <<>>=
+% contrasts(french_cdi_24$lexical_class)
+% @
+
+The interpretation for each contrast follows from the inverse trick (Section~\ref{sec:contrast-interp}):
+%follows
+%The detailed interpretation for each contrast (including the scaling factors) 
+%follows from the inverse trick 
+
+<<>>=
+solve(cbind(1, contrasts(french_cdi_24$lexical_class))) %>% fractions()
+@
+
+After the intercept (row 1 = grand mean), the intuition for the contrasts follows from each row:  the first contrast (row 2) is \tsc{verbs} minus \tsc{adjectives}; the second contrast (row 3) column is adjectives minus \tsc{verbs}/\tsc{function\_words}, etc.
+
+The R implementation is confusing because each contrast is then multiplied by a scaling constant.   For example, row 3 (contrast 2) is:
+$$
+\frac{1}{3} \cdot \left(
+\tsc{level 3} - 
+\frac{\tsc{level 1} + \tsc{level 2}}{2} \right)
+= \frac{\tsc{adjectives}}{3} - 
+\frac{\tsc{function\_words}}{6} - 
+\frac{\tsc{verbs}}{6}
+$$
+
+More sensible would be `level $k$ minus average of previous levels', which is how Helmert contrasts are usually described. This is implemented in the \ttt{contr.helmert.unweighted()} function in the {psycholing} package \citep{psycholing}, and the `weighted' version Helmert contrasts defined this way are computed with \ttt{contr.helmert.weighted()}.   We use R's version in the text because it is widespread.  (If you use the psycholing package, note that it must be installed from Github: see \url{https://www.lrdc.pitt.edu/maplelab/statistics.html}.)
+%but in my own work plan to start using the \ttt{psycholing} version.)
+
+Helmert contrasts are often used when there is an expected order of levels.  A common mistake with this coding scheme is to interpret significant estimates all with the same sign as meaning that each level is (significantly) larger than the previous level: in our example, \tsc{nouns} $>$ \tsc{adjectives}, and so on.   These comparisons correspond to a different coding scheme: \emph{successive difference contrasts} (\ttt{contr.sdif()} in the {MASS} package): the first contrast is \tsc{level 2} $-$ \tsc{level 1}, the second is \tsc{level 3} $-$ \tsc{level 2}, etc.   Successive difference contrasts are not orthogonal, so they are not a good default from a practical perspective, but sometimes they are a good choice if they capture research questions.
+% 
+% For our example, this coding scheme gives:
+% 
+% <<>>=
+% french_cdi_24$lexical_class_sdif <- french_cdi_24$lexical_class
+% contrasts(french_cdi_24$lexical_class_sdif) <- contr.sdif(4)
+% update(cdi_cc_mod_1, . ~ lexical_class_sdif) %>% 
+%   tidy(conf.int=TRUE) %>% 
+%   select(term, estimate, conf.low, conf.high)
+%   @
+% 
+% Thus, \tsc{function\_words} $<$ \tsc{adjectives} (meaning ``95\% CI for this comparison doesn't include 0''), but \tsc{adjectives} = \tsc{verbs} and \tsc{verbs} = \tsc{nouns}.  So for this example, each level is significantly greater than lower levels (on average: Helmert contrasts) but not necessary the \underline{previous} level (successive difference contrasts).  
+% 
+% Note that successive difference contrasts are not orthogonal, so they are not a good default from a practical perspective, but sometimes they are a good choice if they capture research questions.
+
+\end{boxedtext}
+
+\subsection{Weighted Helmert contrasts}
+\label{sec:weighted-helmert}
+
+% Our definition of `centered' above has an important issue---it only has the desired property of the contrast summing to zero across the dataset for balanced factors.  To see why this matters, consider a two-level factor $x$. All `centered' coding schemes considered so far (sum, simple, Helmert) correspond to setting $x$=-1/1 or -0.5/0.5 for \tsc{level 1} and \tsc{level 2}.  But in Section~\ref{sec:centering-scaling} we already recommended centering $x$ by just subtracting the mean value (after converting to a numeric predictor): this improves interpretability of the intercept and main effect terms in the presence of interactions with $x$, by making $x=0$ mean `$x$ held at its [weighted] mean'. If $x$ is balanced, these values for \tsc{level 1} and \tsc{level 2} will be -0.5 and 0.5; otherwise, they will not be, so the `centered' coding scheme for an unbalanced $x$ doesn't give the desired interpretation. 
+
+
+% Thinking of $x$ as a single contrast, this is the same motivation for all `centered' contrast coding schemes considered so far, where \tsc{}
+% Thinking of $x$ as a single contrast, this corresponds to the contrast being centered---its values for \tsc{level 1} and \tsc{level 2} should sum to zero over the dataset.
+
+
+% - Recall the motivation for `standardizing' two-level factors, by converting to 0/1 then subtracting mean value. Makes the average value 0 over the dataset (and intercept = weighted average). If the factor is *balanced*, the values will be -0.5/0.5 ; otherwise won't be.
+
+Recall the motivation for `standardizing' two-level factors, by converting to numeric and then subtracting the mean  (Section~\ref{sec:centering-scaling})---this makes the predictor average to 0 across the dataset, which improves interpretability of the intercept and main effects (in the presence of interactions).  If the factor is balanced, this is the same as coding it as a single contrast with levels -0.5 and 0.5 (or -1 and 1)---as in every `centered' contrast coding scheme we've considered so far. But for unbalanced data, it is not.
+
+Factors with $k>3$ levels have the same issue for the `centered' coding schemes considered so far (sum, simple, Helmert): each contrast will average to 0 for balanced data, but will not for unbalanced data. The underlying issue is that the intercept in these coding schemes corresponds to the \textbf{unweighted} mean (e.g.,\ $(\mu_1 + \mu_2 + \mu_3)/3$ for $k=3$), which assumes balanced data, rather than the \textbf{weighted} mean, which does not.
+
+\emph{Weighted contrasts} deal with this issue by coding the intercept to correspond to the weighted mean.  This is the equivalent of centering a continuous predictor, with similar advantages (model interpretability, fitting) and disadvantages (model results more tied to this particular dataset).  Any contrast coding scheme can be made `weighted' (e.g.,~\citealp[][\S8.4]{cohen2002applied}); we show just \emph{weighted Helmert contrasts} as an example.  In this coding scheme, the contrasts have the same interpretation as for (unweighted) Helmert contrasts (contrast $i$: difference between level $i+1$ and unweighted mean of previous levels), but the intercept now corresponds to the weighted mean.
+
+
+% 
+% 
+% - *weighted Helmert contrasts* deal with this issue: contrasts have same interpretation as Helmert (diff between level and mean of previous levels), but intercept is now the weighted average.  
+
+
+
+
+% - For 3+ level factors, the `centered' coding schemes considered so far (sum, Helmert) have the same issue: each contrast will average to 0 if the factor is balanced; won't otherwise.
+
+% - *weighted Helmert contrasts* deal with this issue: contrasts have same interpretation as Helmert (diff between level and mean of previous levels), but intercept is now the weighted average.  
+
+We can make our own weighted Helmert contrast matrix for a given dataset using the inverse trick: constructing the interpretation matrix and inverting.
+%as for simple contrasts above.
+%\footnote{The \ttt{contr.helmert.weighted} function in \ttt{psycholing} also constructs a weighted Helmert contrast matrix, but the contrasts are defined without scaling constants, like \ttt{contr.helmert.unweighted} slightly different.}  For the \ttt{french\_cdi\_24}  example:
+
+%this writing (9/2020) it is buggy.}  LEt'
+
+% - implementation: let's make our own, also serves as an example of custom contrast coding. (the \ttt{contr.helmert.weighted} in \ttt{psycholing} package only works currently if levels are in default order.) 
+
+<<>>=
+## Weighted Helmert version of lexical_class
+french_cdi_24$lexical_class_wh <- french_cdi_24$lexical_class
+
+## 1. Make interpretation matrix: invert Helmert contrast matrix
+interpMat <- ginv(cbind(1, contrasts(french_cdi_24$lexical_class)))
+
+## 2. Change the intercept's interpretation (row 1)
+## to weighted average
+interpMat[1, ] <- count(french_cdi_24, lexical_class)$n / 
+  nrow(french_cdi_24)
+
+# Invert and remove column 1 to get contrast matrix:
+contrasts(french_cdi_24$lexical_class_wh) <- ginv(interpMat)[, 2:4]
+@
+
+Compare the weighted Helmert contrast matrix and the original (unweighted Helmert) version:
+<<>>=
+contrasts(french_cdi_24$lexical_class_wh)
+contrasts(french_cdi_24$lexical_class)
+@
+
+The contrast weights have been adjusted a bit in the weighted version, especially in cells related to \tsc{nouns} (in contrast 3), reflecting the fact that this is the most common level ($\sim$half the data).
+
+
+We can also refit the regression with weighted Helmert contrasts, and compare to the version with (unweighted) Helmert contrasts above (\ttt{cdi\_cc\_mod\_1}):
+
+<<>>=
+update(cdi_cc_mod_1, . ~ lexical_class_wh) %>%
+  tidy(conf.int = TRUE) %>%
+  select(term, estimate, conf.low, conf.high)
+@
+
+Only the intercept differs: it is now \Sexpr{coefficients(update(cdi_cc_mod_1, . ~ lexical_class_wh))[['(Intercept)']]} (close to 50\% probability), up from \Sexpr{coefficients(cdi_cc_mod_1)[['(Intercept)']]} ($\sim$43\% probability). These numbers correspond to the weighted and unweighted means (of log-odds that \ttt{produces}=1), across the levels of  \ttt{lexical\_class}:
+
+<<>>=
+french_cdi_24 %>%
+  group_by(lexical_class) %>%
+  summarise(m = logit(mean(produces)), n = n()) %>%
+  summarise(weighted = weighted.mean(m, n), unweighted = mean(m))
+@
+
+The weighted average seems more meaningful for this case---it is very similar to the overall proportion of words known in the data (\Sexpr{100*mean(french_cdi_24$produces)}\%), which is an intuitive measure (proportion of words on the questionnaire `known'), while the unweighted average doesn't correspond to anything intuitive.  
+
+More generally:  weighted or unweighted contrasts could make more sense depending on the data/research questions (Box~\ref{box:weighted-unweighted}). We will usually not use weighted contrasts in this book, to simplify the presentation, but they may make sense for your data.
+
+
+\begin{boxedtext}{Broader context: Unweighted/weighted contrasts or means}
+\label{box:weighted-unweighted}
+
+Whether to use weighted versus unweighted contrasts is closely related to whether to use weighted or unweighted means when calculating model predictions (to marginalize over other predictors). In both cases, there are conceptual and practical reasons for either choice, and different packages use different defaults (e.g.,\ \ttt{Effects} and \ttt{emmeans} use weighted and unweighted means for model predictions, respectively).
+
+From a conceptual perspective, weighted contrasts make more sense when the dataset can be thought of as a sample from the `real' data distribution, so each contrast gives an estimate of what's expected (of some quantity) in new data; this is common for corpus data.  Unweighted contrasts make more sense when different levels are equally valid, like treatment groups in laboratory experiments, and any imbalance is the result of incidental factors (e.g.,\ cost of data collection); the contrast estimates what the quantity \textbf{would} be if the experiment were balanced.
+
+% FUTURE: say more briefly, and give reference? I think Cohen et al book, or serious stats, or emmeans vignette discuss.
+% FUTURE: this is a related issue to how to marginalize over a factor--- weighted versus unweighted means (REF back somewhere?).  
+From a practical perspective, weighted Helmert contrasts are the best choice considered so far---they are orthogonal and centered, even for unbalanced data, and correspond to the standardization we are already doing by default (`rescaling') for two-level factors.  So arguably, weighted Helmert contrasts seem like a better default coding scheme than unweighted Helmert for factors, especially as imbalance is very common for linguistic data. %especially corpus data (which is many of our examples). 
+The practical drawbacks are minor: weighted contrasts (Helmert, or other) are not currently widely used for linguistic data,
+%(REF to Chodroff/Wilson?), 
+nor implemented in a standard R function.  I am not sure how often the weighted/unweighted choice makes a real difference to model results---intuitively, we'd expect very little difference when analyzing data from more balanced data (e.g.,\ laboratory experiments) and more for highly imbalanced data (e.g.,\ corpus data).
+%laboratory experiments (which tend to be balanced) and more for e.g.,\ corpus data.  
+
+The \ttt{emmeans} ``Basics of estimated marginal means'' vignette and \citet[][\S8.3.1, 8.4.1]{cohen2002applied} give useful discussion.
+
+\end{boxedtext}
+
+% This coding scheme is orthogonal and centered---regardless of imbalance. For two-level factor it corresponds to the `rescaling' we have already recommended, and as we will see it also corresponds to what's done in standard `post-hoc' tests.  So arguably *this* scheme is a better default for factors---imbalance is common in linguistic data, especally corpus data (which is many of our examples).  The only drawback is practicality: it's not currently implemented in a standard function, or widely used  (can cite Chodroff/Wilson).
+
+\subsection{Custom contrasts}
+\label{sec:custom-contrasts}
+
+Recall that the primary motivation for choosing a contrast coding scheme is to match the model structure to the research questions (Section~\ref{sec:contrast-coding-intro}).   Often this can be done with a standard coding scheme; for example, in an experiment with a control condition and two test conditions, simple coding could capture two comparisons of interest (\tsc{control} vs.\ \tsc{test1}, \tsc{control} vs.\ \tsc{test2}).
+
+
+
+
+
+
+% (actually this could go in introduction to contrast coding?)
+% 
+% - Two motivations behind choosing a contrast coding scheme: testing focused hypotheses from RQs, and practical considerations (model interpretability, unnecessary collinearity, ease of fitting).
+% 
+% - We've so far mostly focused on (2), because it applies to *any* model containing categorical variables (you always have to choose a contrast coding scheme). But (1) is more important -- just case-specific. This is the focus on Schad et al tutorial; we discuss more briefly.  Greatly improves model utility for addressing RQs, and also raises statistical power (e.g., Cohen et al 2002 340) by requiring fewer tests.
+
+But it is often useful to use a custom coding scheme.  As an example, consider the \ttt{french\_cdi\_24}  example (Section~\ref{sec:french-cdi}), where the literature has focused on `noun bias'---meaning \tsc{nouns} versus predicates (\tsc{verbs}/\tsc{adjectives})---and `function-word bias' may be even stronger (meaning \tsc{function\_words} vs. predicates). No difference between predicate types (\tsc{adjectives}, \tsc{verbs}) is expected a priori.  We can code these comparisons as three contrasts, letting the intercept be the unweighted grand mean (though this could easily be extended to a weighted version, as above).
+
+The rows of the interpretation matrix are:
+\begin{itemize}
+
+\item Intercept: 0.25, 0.25, 0.25, 0.25 (unweighted mean)
+
+\item Contrast 1 (noun bias): 0, -0.5, -0.5, 1 (\tsc{nouns} vs. average of \tsc{verbs}/\tsc{adjectives})
+
+\item Contrast 2 (function-word bias): -1, 0.5, 0.5, 0 (predicates vs.\ \tsc{function\_words})
+
+\item Contrast 3 (within-predicates): 0, -1, 1, 0 (\tsc{verbs} vs.\ \tsc{adjectives})
+
+\end{itemize}
+
+We construct this matrix, then apply the inverse trick to get the corresponding contrast matrix:
+%which is used to code a `custom' version of \ttt{lexical\_class}:
+
+% 
+% - French CDI example: literature focuses on `noun bias'---meaning nouns vs.\ predicates verbs/adjectives.  within-predicate less clear.  and `function word bias' = fxn words vs predicates. Let's code these as contrasts---unweighted (intercept = grand mean), though could easily extend to a weighted verison as above.
+
+% % - Set up rows of interpretation matrix:
+% % 
+% % - intercept: grand mean => 0.25/0.25/0.25/0.25
+% % 
+% % - contrast 1: predicates vs fxn words : -1, 0.5, 0.5, 0 (= average of predicates vs. function words)
+% % 
+% % - contrast 2: within-predicates: 0, -1, 1, 0 (= verbs vs. adjectives)
+% 
+% - contrast 3: nouns vs predictates (0, -0.5, -0.5, 1)
+
+<<>>=
+## Interpretation matrix
+customInterp <- t(matrix(c(
+  0.25, 0.25, 0.25, 0.25,
+  0, -0.5, -0.5, 1,
+  -1, 0.5, 0.5, 0,
+  0, -1, 1, 0
+), ncol = 4))
+
+## Corresponding contrast matrix: invert, then remove first column
+customCont <- solve(customInterp)[, -1]
+
+## New version of lexical_class with these contrasts
+french_cdi_24 <- mutate(french_cdi_24,
+  lexical_class_custom = lexical_class
+)
+contrasts(french_cdi_24$lexical_class_custom) <- customCont
+@
+
+% - Using the inverse trick (Section~\ref{sec:contrast-interp})--- columns after the first = contrast matrix
+
+We can then refit the \ttt{french\_cdi\_24} model with lexical class coded with these contrasts:
+
+<<>>=
+update(cdi_cc_mod_1, . ~ lexical_class_custom) %>%
+  tidy(conf.int = TRUE) %>%
+  select(term, estimate, conf.low, conf.high)
+@
+
+Thus, there is significant `noun bias' and `function-word bias' in this data (contrasts 1, 2), but no definitive difference between types of predicates (compare to model predictions: Figure~\ref{fig:cc_pred_1}). The advantage of using custom contrasts is that the answers to the research questions can just be read off from the model results.
+
+% - So there is strong evidence for `noun bias', and `function word bias' (contrasts 1, 2), but no definitive difference between predicate types.
+
+
+\subsection{Ordered factors / Orthogonal polynominal contrasts}
+
+So far we have considered two types of variables as predictors in regression models: continuous and factors.  Continuous variables are ordered, meaning that there are `larger' and `smaller' values of the variable. When a continuous $x$ is used as a predictor in a regression, it is assumed that a unit change always has the same effect on the response $y$ (the `slope'): increasing $x$ from 1 to 2 has the same effect as increasing $x$ from 3 to 4.  Factors are discrete and unordered: no level of a factor is `larger' than other levels.
+%\footnote{Levels of a factor are often discussed as if they do have an order---\tsc{level 1}, \tsc{level 2}, and so on---in order to define contrasts, but this ordering is arbitrary. There is no sense in which level 1 is inherently less than level 2.} 
+When a factor is used as a predictor in a regression model, it is not assumed that changing from level 1 to level 2 has the same effect on the response as changing from level 2 to level 3.
+
+\emph{Ordered factors} lie in between these two types of variables---they are discrete, but ordered.
+%They are discrete, but ordered, like continuous variables.
+It is assumed that level 1 is conceptually `less than' level 2, and so on (like a continuous variable), but it is not assumed that level 1$\to$2 has the same effect as level 2$\to$3 (like a factor). Ordered factors are often used for variables where the levels can be thought of as lying on a scale, and take on few values (\textasciitilde3--7). Some examples are number of syllables in a word, or level of second-language proficiency (\tsc{no knowledge} $<$ \tsc{beginner}...).  For exposition, we assume here that \ttt{lexical\_class} also makes sense to think of as ordered (subsequent levels are more noun-like).
+
+%(FUTURE : cut down the above? it's just an R quirk that these are implemented so differently from unordered factors, I think so the data type works as a response variable)
+
+Ordered factors are implemented as a separate data type in R (like \ttt{numeric} or \ttt{factor}). For example, \ttt{as.ordered} converts \ttt{lexical\_class} to an ordered factor:
+
+<<>>=
+french_cdi_24 <- mutate(french_cdi_24,
+  lexical_class_ord = as.ordered(lexical_class)
+)
+french_cdi_24$lexical_class_ord %>% head()
+@
+
+The R output shows the ordering of levels with $<$. Compare to the unordered version:
+
+<<>>=
+french_cdi_24$lexical_class %>% head()
+@
+
+Coding a factor as `ordered' just means using a particular contrast coding scheme: \emph{orthogonal polynomial contrasts}.\footnote{The extra data type for `ordered factors' lets R functionality (e.g.,\ for visualization) treat ordered and unordered factors differently in useful ways,  but formally both are just factors. Note that \ttt{as.ordered()} assumes the factor's levels are already in the desired order, which they are for the \ttt{french\_cdi\_24} case (because we reordered the levels 
+%using the \ttt{fct\_relevel} call
+in Section~\ref{sec:french-cdi}).}
+%but otherwise `ordered factor' just means a different (otherwise it's just another coding scheme).} 
+In this scheme the intercept is the grand mean, and each contrast corresponds to a different kind of (polynomial) relationship that could hold between the factor and the response, if the factor were considered as a continuous variable (with values 1, 2, ...).
+%\underline{if} the levels were equally spaced (and continuous).
+The first contrast is the `linear trend' (how much does the relationship look like a line?), the second the `quadratic trend' (how much does the relationship look like a parabola?), and so on.
+
+
+
+For example, for the \ttt{lexical\_class} example there are three contrasts (linear, quadratic,  cubic), which correspond to the trends shown in Figure~\ref{fig:poly-contrasts}.
+
+<<>>=
+contrasts(french_cdi_24$lexical_class_ord)
+@
+
+<<poly-contrasts, echo=F, fig.asp=0.5, out.width='75%', fig.width=default_fig.width*.75/default_out.width, fig.cap="Orthogonal polynomial contrasts for \\ttt{lexical\\_class} coded as an ordered factor.">>=
+data.frame(contr.poly(4), level = levels(french_cdi_24$lexical_class)) %>%
+  mutate(level = fct_relevel(level, c("function_words", "verbs", "adjectives", "nouns"))) %>%
+  pivot_longer(starts_with(".")) %>%
+  mutate(name = fct_recode(name, linear = ".L", quadratic = ".Q", cubic = ".C")) %>%
+  ggplot(aes(x = level, y = value)) +
+  geom_point() +
+  geom_line(aes(group = name), lty = 2) +
+  facet_wrap(~name) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+# # linear
+# plot(M[,1], type = 'l', lty = 'dashed', lwd = 2,
+#      ylab = "", xlab = "", col = 'blue')
+# points(M[,1], cex = 2, pch = 19)
+# # quadratic
+# plot(M[,2], type = 'l', lty = 'dashed', lwd = 2, axes = F,
+#      ylab = "", xlab = "", col = 'blue')
+# points(M[,2], cex = 2, pch = 19)
+# # cubic
+# plot(M[,3], type = 'l', lty = 'dashed', lwd = 2, axes = F,
+#      ylab = "", xlab = "", col = 'blue')
+# points(M[,3], cex = 2, pch = 19)
+@
+
+Let's refit the model for the \ttt{french\_cdi\_24} data as a function of lexical class, with \ttt{lexical\_class} coded as an ordered factor:
+
+<<>>=
+cdi_cc_mod_1 %>%
+  update(. ~ lexical_class_ord) %>% tidy(conf.int = TRUE) %>%
+  select(term, estimate, conf.low, conf.high)
+@
+
+The linear trend has a confidence interval well away from 0, while the 
+%the largest effect size and is 
+%highly significant, 
+quadratic and cubic trends are not meaningfully different from 0.  This means the model predicts an essentially linear relationship between \ttt{lexical\_class\_ord} and \ttt{produces}.  (This can be seen in Figure~\ref{fig:cc_pred_1}---the relationship is plausibly roughly linear, in log-odds space.)  
+%This could be useful for simplifying the model (Box~\ref{box:ordered-dim-red}).
+
+\begin{boxedtext}{Practical note: Ordered factors, dimensionality reduction, accessing contrasts}
+\label{box:ordered-dim-red}
+
+This example illustrates one motivation for ordered factors---dimensionality reduction, by reducing the the number of
+contrasts needed to represent a factor’s effect.
+%(the model is also easier to interpret).  
+If we wanted to simplify the model, it would be justified at this point to drop the quadratic and cubic trends, and just use the linear contrast to represent the effect of \ttt{lexical\_class\_ord}:
+
+<<>>=
+french_cdi_24$lexical_class_lin <-
+  model.matrix(~lexical_class_ord, data = french_cdi_24)[, 2]
+update(cdi_cc_mod_1, . ~ lexical_class_lin) %>% tidy()
+@
+
+Regardless of whether we actually remove the non-linear contrasts, it is easier to interpret this model's result when \ttt{lexical\_class} is coded as an  ordered factor (one contrast `matters') than as an unordered factor (all contrasts `matter' in model \ttt{cdi\_cc\_mod\_1})
+.  When dealing with an ordered factor with many levels, or several ordered factors,  dimensionality reduction can make model fitting and interpretation much easier.
+
+Note that above we extracted a single contrast from a factor, as a numeric predictor, by using \ttt{model.matrix()} (whose column 1 = the intercept, column 2 = contrast 1, and so on).  This functionality will come up a lot in later chapters; it is often useful to decompose a factor into individual contrasts.
+
+\end{boxedtext}
+
+
+
+
+
+
+\subsection{Discussion}
+\label{sec:factors-discussion}
+
+We have covered a lot of ground on different contrast coding schemes. If you have a multi-level factor in your data, you will have to use contrast coding. 
+%and different coding schemes make sense in different situation (and are widely used in papers).  
+%It would be nice to sum up at this point with rules on which coding scheme to use, when.
+%
+%Unfortunately, 
+The choice of a coding scheme is case-specific: it should be driven by research questions, practical properties of the coding scheme (whether orthogonal or centered), and ease of interpretability (depending on how complex your data is, norms in your area)---in that order. We will give some examples of choosing contrasts in particular cases in the remaining chapters.
+
+% ---in that order. Ease of interpretability may also matter, depending on how complex your data is and norms in your area---
+%(there is no point using the `right' coding scheme to adress your research questions if your audience won't understand it. 
+
+Still, we can recap some general advice:
+\begin{itemize}
+\item If you are using contrasts to capture research questions,
+\textbf{choose a coding scheme that matches the research questions}, designing custom contrasts if needed.  
+\item Regardless of whether you will be interpreting contrasts w.r.t. research questions (for example, when choosing the coding scheme for control predictors):  \textbf{don't use treatment coding without a good reason}.  Although most common, this coding scheme is neither orthogonal nor centered. 
+%(If you want the treatment/control interpretation, use `simple coding'.)  
+\item Instead, minimally \textbf{use a `centered' coding scheme} (e.g.,\ simple, sum, Helmert, ordered)---this pays dividends for model interpretability (and convergence, once we get to mixed-effects models).
+\item Preferably use an orthogonal coding scheme (e.g.,\ Helmert, ordered), since this makes contrasts capture independent information, but this is less important in practice than centering.  
+\item `Weighted' contrasts are an interesting option, especially for unbalanced data (which most linguistic data is), but are non-standard at this point.
+\end{itemize}
+
+Since treatment coding is the default in R, it is commonly recommended to change the default to a centered coding scheme (sum, or Helmert), so you don't have to manually change every factor's contrasts. We use {Helmert contrasts as our default} going forward (and orthogonal polynomials for ordered factors):
+
+<<cache=FALSE>>=
+options(contrasts = c("contr.helmert", "contr.poly"))
+@
+
+Thus, \textbf{our default for standardizing predictors} is now (building on Section~\ref{sec:centering-scaling}):
+\begin{itemize}
+\item Continuous predictors: center, divide by two standard deviations 
+\item Binary factors:  transform to 0 and 1, then center
+\item Factors with $k>2$ levels: Helmert contrasts
+\end{itemize}
+
+If you are confused at this point, this is natural.  Contrasts are tricky to use and interpret, and although it gets easier with practice, it is important to keep the big picture in mind: {contrast coding schemes are just fancy ways of coding the relationship between a factor and the response}---as discussed below, they all result in equivalent models, which make the same predictions.  
+%Indeed, you can code a factor without contrast coding, though this is not generally a good idea (Box~\ref{box:cell-means-coding}). 
+There is no `wrong' contrast coding scheme, just better and worse ones for a particular case.
+%which can make your life easier (by simplifying your analysis, aiding model convergence, etc.). 
+
+
+% FUTURE: cut down this section, and reduce redundancy of points here with those made in earlier subsections...
+
+% 
+% all result in the same model, as  Which coding scheme you use is just a  such, which coding scheme you use is just a matter of convenience, depending on which hypotheses you want to test, and practical considerations (e.g.,~collinearity). There is no ``wrong'' contrast coding scheme, just better and worse ones for a particular case.
+
+% 
+% - don't use treatment coding without a good reason! (you probably want simple coding).
+% 
+% - non-centered or non-orthogonal coding schemes (simple, treatment, sum):  useful to understand because widely used, not to use.
+% 
+% - Regardless of RQs, should use a *centered* coding scheme---which preserves desirable properties of centering predictors.
+% 
+% - a reasonable default is *Helmert*; weighted helmnert is better in some sense (espcially if your data is unbalanced, most is), but practical issues. 
+% - Our `standardizing' default going forward:
+% 
+% -- Continuous variables: centered, divided 2 SD
+% 
+% -- Two-level factors: numeric, center
+% 
+% -- 3+-level factors: weighted Helmert
+% 
+% (that section combines with the old summary section. maybe the whole thing as `practical note')
+% 
+% -----
+
+
+% FUTURE: add somewhere? annoying but important practical factor stuff in R
+% 
+% - taking a subset undoes contrast coding
+% 
+% - taking a subset doesn't get rid of unused levels (use droplevels)
+
+
+
+\begin{boxedtext}{Practical note: Cell-means coding}
+\label{box:cell-means-coding}
+
+It is useful to know about a final way of coding a categorical variable, which is to not use contrasts at all. In \emph{cell means coding} there is no intercept term; instead of coding as 1 intercept and $k-1$ contrasts, the variable is coded as $k$ `indicator' predictors: the $i$th indicator $x_i$ is 1 for level $i$ observations and 0 otherwise. 
+
+The notation for cell-means coding in an R model formula is \ttt{-1 + X} (intuitively, the intercept has been `removed'); \ttt{0 + X} is equivalent notation. For example, here we fit  the \ttt{french\_cdi\_24} model with \ttt{lexical\_class} coded in this way:
+
+<<output.lines=10:15>>=
+glm(produces ~ -1 + lexical_class,
+  data = french_cdi_24, family = "binomial"
+) %>% summary()
+# Equivalent ways to fit model:
+# update(cdi_cc_mod_1, . ~ -1 + lexical_class)
+# update(cdi_cc_mod_1, . ~ 0 + lexical_class)
+@
+
+The coefficients for the $i$th predictor 
+are just the estimates for level $i$ ($\mu_i$), rather than a comparison \textbf{between} levels, as in contrast coding.  
+This can also be thought of as a comparison between $\mu_i$ and 0, which is the hypothesis test reported for each coefficient (a $z$-value and $p$-value).
+
+Cell means coding is very intuitive, but is not usually a good choice. The predictors are neither centered nor orthogonal (since any being 1 means all others must be 0) and coefficient interpretations get unintuitive quickly once other predictors are added.
+%% FUTURE: JPK - this would benefit from an example.
+
+Nonetheless it is good to understand what cell-means coding is---just another way of coding a factor. Cell-means coding often comes up as an issue to work around due to how R implements factors.
+%, especially when fitting mixed models (by default factors are cell-mean coded in formulas without an intercept).
+%As discussed later (REF), a sizable fraction of mixed-effects models reported in the language science literature are probably underfitted essentially due to this quirk of R's implementation of factors.  
+Cell-means coding is used in some subfields, such as traditional variational sociolinguistics, where categorical predictors are coded this way by default in Varbrul/Goldvarb models.
+
+\end{boxedtext}
+
+
+\section{Omnibus and post-hoc tests}
+\label{sec:omnibus-post-hoc}
+
+We now turn to the alternative to contrast coding for examining how a factor $x$ affects the response: asking `does $x$ have any effect?' (`omnibus test'), followed by `which levels of $x$ differ?' (`post-hoc tests').
+
+%(Section~\ref{sec:contrast-coding-intro}) an alternative to contrast coding is to ask ``does the factor have any effect?'' (`omnibus test'), followed by `post-hoc tests' to dig into which levels differ.  
+
+% - Often of interest to ask ``does the factor have any effect?'', an ``omnibus test'' --- either to address an RQ (does lexical class matter at all?), or as a first step in `the other approach' above, followed by post-hoc tests to dig into which levels differ.
+% 
+% - Two other methods often of interest for understanding the effect of a factor, *after* fitting the model: `omnibus test', to ask `does the factor have any effect?' `Post-hoc tests', to ask how specific levels or combinations of levels differ from each other---conceptually exactly the same as contrasts (but after fitting the model, hence `post-hoc').  Potentially for more than $k-1$ comparisons, in which case need to correct for multiple comparisons.
+
+\subsection{Omnibus tests}
+\label{sec:omnibus-vs-contrasts}
+
+For a continuous predictor, the question ``does this predictor significantly affect the response?'' is answered by the significance of the regression coefficient. For a factor, we would like to ask the same question (e.g.,~``does \texttt{lexical\_class} affect the likelihood of a word being produced?''), but no one coefficient's \(p\)-value gives the answer, because the factor's effect on the response is jointly captured by all its contrasts.  Instead, we assess whether the factor affects the response using model 
+comparison (Section~\ref{sec:lm-model-comparison}).
+
+For a factor with \(k\) levels, the contrasts correspond to \(k-1\) predictors; there may be $q$ other predictors in the model. 
+%We compare the full model (all predictors) Suppose there are $p$ additional predictors in the regression model. 
+We can compare the full model to the reduced model (containing just the $q$ predictors) using the methods previously discussed for testing the contribution of $k-1$ predictors:
+an \(F\) test for linear regression, or a likelihood-ratio test for logistic regression (Section~\ref{sec:log-reg-lik-ratio}). 
+%In either case, the difference in degrees of freedom between the two models is just the number of contrasts (\(k-1\)).
+
+For example, this model comparison shows that \ttt{place} significantly ($p<0.001$) affects \ttt{vot} for the \ttt{vot\_michael} data:
+
+<<output.lines=3:7>>=
+anova(vot_cc_mod_1, update(vot_cc_mod_1, . ~ 1))
+@
+
+% 
+% 
+% This model comparison tests whether a word's \ttt{lexical class} significantly affects whether it's been produced at 24 months:
+% 
+% <<>>=
+% anova(cdi_cc_mod_1, update(cdi_cc_mod_1, . ~ 1), test='Chisq')
+% @
+% 
+% In this case, $p=1$ (the intercept-only model) and $k=4$, so the difference in degrees of freedom between the model is 3. The likelihood-ratio test ($\chi^2(3)$) suggests the answer is `yes' ($p<0.001$). 
+
+In model \ttt{vot\_cc\_mod\_1}, \ttt{place} was coded using treatment contrasts, but this %actually
+does not matter.  The result is the same if we use e.g.,\ sum contrasts:
+
+<<output.lines=3:7>>=
+m1 <- update(vot_cc_mod_1, . ~ place_sum)
+m2 <- update(vot_cc_mod_1, . ~ 1)
+anova(m1, m2)
+@
+
+
+
+
+Crucially, \textbf{the result of model comparison does not depend on the coding scheme used}, because
+%This makes sense, as 
+model comparison addresses a  question which does not depend on the coding scheme (`does this factor improve the model?').
+%, rather than `how do particular levels of the factor differ?'.)
+Thus, the choice of a coding scheme and any associated concerns (e.g.,\ centering, collinearity) don't apply if you are only interested in an omnibus effect.
+%Thus, it is also not affected by whether the coding scheme is centered or orthogonal.
+%}
+
+\paragraph{Example: Omnibus tests versus contrast coding}
+
+This example illustrates
+%another omnibus test, as well as 
+why it can matter whether contrast coding or the omnibus/post-hoc method is used to assess the effect of a factor.
+
+Let's return to the \ttt{diatones} data from the last chapter. An important predictor was \ttt{syll2\_coda} (the number of consonants in the syllable coda), which we coded as numeric. This was in fact an odd choice from a theoretical perspective, since `number of coda consonants' rarely plays a role in phonology or sound change. Instead, what tends to matter is the `weight' of a syllable---whether it is `light', `heavy', or `super-heavy'---sometimes light and non-light syllables behave differently, sometimes all three behave differently. 
+%% FUTURE: add ref there, and simplify if possible?
+
+Here, these categories correspond to \ttt{syll2\_coda} = 0, 1, and 2/3.   It makes sense to recode \ttt{syll2\_coda} as a factor with levels \tsc{0}, \tsc{c}, and \tsc{cc*}
+ (super-heavy, heavy, light):
+ %\footnote{Combining \ttt{syll2\_coda}=2 and 3 also makes sense from a practical perspective since there are very few \ttt{syll2\_coda}=3 observations.}
+
+%Now that we have, let's recode this variable as a factor, with the same level for \ttt{syll2\_coda}=2 and 3 since there are very few observations with the latter 
+%(see \ttt{xtabs(\~syll2\_coda, data=diatones)}):
+
+<<>>=
+diatones <- diatones %>%
+  mutate(
+    syll2_coda_fact =
+      fct_recode(syll2_coda_orig, `CC*` = "CC", `CC*` = "CCC")
+  ) %>%
+  mutate(syll2_coda_fact = fct_relevel(syll2_coda_fact, rev))
+@
+
+%The factor \ttt{syll2\_coda\_fact} has levels \tsc{CC*}, \tsc{C}, and \tsc{0} (for \ttt{syll2\_coda}=2/3, 1, 0), which correspond to theoretically-motivated values---`super-heavy', `heavy', and `light' syllables.  
+
+We have ordered the levels as \tsc{cc*}, \tsc{c}, \tsc{0}, so that the two Helmert contrasts (which are now assigned by default, following our \ttt{options(contrasts...)} command above) correspond to theoretically-motivated comparisons: heavy versus\ super-heavy (contrast 1), and light versus\ heavy (contrast 2).
+
+<<>>=
+contrasts(diatones$syll2_coda_fact)
+@
+
+Now, consider our first step in building up a model for the \ttt{diatones} data (Section~\ref{sec:mlogreg-mod-1})---a model with main effects for all predictors:
+
+<<>>=
+mlogreg_mod_1_new <- glm(stress_shifted ~ syll2_coda_fact + syll2_td +
+    frequency + syll1_coda, data = diatones, family = "binomial")
+@
+
+We could assess whether \ttt{syll2\_coda\_fact} `has an effect' in two ways, using the $\alpha = 0.05$ significance level.  In the omnibus/post-hoc test approach, we would first compare the models with and without this term:
+
+<<output.lines=3:7>>=
+drop1(mlogreg_mod_1_new, "syll2_coda_fact", test = "Chisq")
+@
+
+The likelihood-ratio test suggests that syllable 2 weight does \textbf{not} significantly affect a word's likelihood of shifting stress.
+%($\chi^2(2) = 5.30$, $p=0.071$).   
+We would conclude that \ttt{syll2\_coda\_fact} does not matter, and stop there.
+
+In the contrast coding approach, we examine the rows of the regression table corresponding to this variable's contrasts:
+
+<<>>=
+tidy(mlogreg_mod_1_new) %>% filter(str_detect(term, "syll2_coda"))
+@
+
+The significant second contrast  means that words with light second syllables (\ttt{syll2\_coda\_fact} = \tsc{0}) are more likely to shift stress. In the same direction, heavy $>$ super-heavy (contrast 1), but the effect is not significant.  We would conclude that \ttt{syll2\_coda\_fact} \textbf{does} matter.
+
+This example shows how the omnibus/post-hoc and contrast-coding approaches can lead to different conclusions, when the effect of a factor is relatively weak: the `right' contrast(s) will detect the effect, while an omnibus test will not, because the latter has higher degrees of freedom.
+
+This is the sense in which the contrast-coding approach has higher power to detect effects of interest \citep[][340]{cohen2002applied}: if there is in reality a difference between light and non-light syllables, failing to detect it using the omnibus test is a Type II error.   Of course, in a factor with enough levels \textbf{some} comparison will be `significant' by chance, even when in reality the factor has no effect, in which case choosing a coding scheme including that  comparison would lead to a Type I error. So it is important that the coding scheme chosen be theoretically-motivated when possible, and as is often the case (Section~\ref{sec:error-trade-offs}), there is a trade-off between Type I and Type II error for different analysis methods,  which comes into play for relatively weak effects.
+
+%While this example is a bit contrived, 
+Which conclusion we make about the effect of \ttt{syll2\_coda\_fact} at this point could in fact lead to qualitatively different conclusions in the final analysis of the \ttt{diatones} data (Exercise~\ref{ex:diatones-alt-analysis}).
+%% in this exerise: if you follow a strict GH method for building up the model here -- would end up not including syll2_coda_fact at all, then not including syll2_td:frequency -- just syll1_coda:frequency. you end up at a model where only frequency, freq:syll1_coda signif. that's quite a different qualitative conclusion about the effect of frequency and structure.
+
+
+% 
+
+% FUTURE -- in future (revision): reconsider terminology `post-hoc tests' to refer to this, generally. relies on the confusing distinction between ``were these comparisons planned based on theory, or not?''  Useful distinction from somewhere online: computing marginal means is one thing; testing for differences between marginal means is another. The latter is what there are two ways to do -- contrast analysis and post-hoc tests.  It would make sense to have a differently-structured chapter, that moves from model predictions (EMMs) to comparisons of means, rather than focusing on just multi-level factors per se.
+%
+% In fact, it seems like `post-hoc' terminology is used just for ANOVAs, so why are we using it?
+
+\subsection{Post-hoc tests}
+\label{sec:post-hoc-tests}
+
+\emph{Post-hoc tests} test for differences between (combinations of) levels of a factor $x$, after fitting the model. This is conceptually the same as contrast coding, except that instead of fixing in advance the $k-1$ differences to be tested, we test as many differences as we want but correct for multiple comparisons.   The most common application is to test all pairwise comparisons of levels of  $x$ (`which levels differ?') after an omnibus test has shown an effect of $x$.
+
+
+
+
+% \begin
+% - Computing differences between (combinations of) levels---after fitting the model.  This is conceptually the same as contrast coding---except that instead of fixing in advance the $k-1$ independent questions to be asked, we ask as many questions as we want, but correct for multiple comparisons (Sec XX).  Post-hoc tests (a.k.a.\ difference-in-means tests, or other names).
+% 
+
+\begin{boxedtext}{Broader context: Whither multiple comparisons?}
+% FUTURE---necessary? 
+When should we correct for multiple comparisons in regression analyses?  It is customary to correct for multiple comparisons when carrying out post-hoc tests on a fitted model---even if doing fewer than $k-1$ tests (for a factor with $k$ levels)---but not when using contrast coding, or indeed for  predictors in multiple regression models generally.  One could imagine correcting the $p$-values in $m$ rows of a regression table for $m$ comparisons---or correcting all $p$-values in a paper (e.g., across several regression models)---but this is rarely done in practice.
+
+I am not sure if there is a good reason for this distinction. It makes sense in the traditional `planned' versus `post-hoc' comparison scenario, but this often doesn't apply in practice (Box~\ref{box:factors-terminology}). As \citet[][77]{dienes2008understanding} notes, ``The decision [to correct in some cases and not others] is basically arbitrary and tacit conventions determine practice.''  This is ultimately a choice between Type I and Type II error, where neither extreme makes sense in all cases.  In a regression including 10 predictors, all included for good theoretical reasons, correcting for multiple comparisons will lower power to detect (presumably) real effects. At the same time, if you analyze the same data in several exploratory analyses including many predictors (most of which probably have no real effect), without correcting for multiple comparisons, you are likely to make a Type I error.  The tacit convention seems like a good compromise.
+
+% is ultimately a choice between Type I and Type II error, where neither extreme makes sense. (If running a regression with 10 predictors, all of which have good scientific reason to be there, correcting for MC will lower power to detect presumably `real' effects. If you analyze the same data 5 ways, *not* correcting for MC you will eventually find a ``significant'' effect.)
+
+
+% It is customary to correct for multiple comparisons when carrying out post-hoc tests---even if doing fewer than $k-1$ tests---but not when using contrast coding, or indeed for any set of predictors in multiple regression models in general.  I am not sure if there is a good reason for this.  It makes some sense in the traditional `planned' versus `post-hoc' thinking, but in general: ``Why should we correct in some cases and not others? The decision is basically arbitrary and tacit conventions determine practice.'' (Dines 2018 p 77).   T
+
+\end{boxedtext}
+
+
+In practical terms, post-hoc tests mean carrying out follow-up analyses on the fitted model rather than the analyses being part of the model itself (as contrasts).  We use the {emmeans} package, which does post-hoc tests in two steps.
+%% FUTURE: include anything like this?
+%\footnote{Various other packages have this functionality (e.g.,\ \ttt{multicomp}), and this is a case where the package used does matter, since implementations differ in details (like how marginalization over other predictors done). \ttt{multcomp} package is also popular (REF).}
+
+First, model predictions are computed for each level of $x$ (the `estimated marginal means', described below).  For the \ttt{french\_cdi\_24} example:
+
+%- We use the this using the \ttt{emmeans} package, which does post-hoc tests in two steps.   First get model predictions for each level of factor will be testing.  For the French example:
+
+<<>>=
+emm_cdi <- emmeans(cdi_cc_mod_1, ~lexical_class)
+emm_cdi
+@
+
+% These are the `estimated marginal means', discussed in more detail below.
+%(These are the `estimated marginal means', discussed when we go into more detail on emmeans below.)
+
+Second, hypothesis tests comparing each pair of levels are carried out. To compute
+%most common case is 
+pairwise comparisons:
+
+<<>>=
+contrast(emm_cdi, "pairwise")
+@
+
+Each test corresponds to one contrast (comparison of levels)---so the table looks exactly like a regression table, except that $p$-values have been corrected for multiple comparisons.
+
+Recall that there are different multiple comparison methods which trade off in Type I/II error (Section~\ref{sec:multiple-comparisons}). The \ttt{emmeans()} function selects a sensible default, in this case the Tukey method (which is designed for pairwise comparisons).
+
+For this example, using the $\alpha=0.05$ level, \tsc{function\_words} are less likely to be acquired than \tsc{verbs}, \tsc{adjectives}, or \tsc{nouns}, and \tsc{verbs} are less likely to be acquired than \tsc{nouns}. These results are consistent with the model's predictions  (Figure~\ref{fig:cc_pred_1}, \ttt{emm\_cdi} above): levels whose 95\% confidence intervals do not overlap are `different'.  
+
+\begin{boxedtext}{Practical note: Reporting the effect of a multi-level factor}
+
+If coded using custom contrasts, as in Section~\ref{sec:custom-contrasts}, the effect of lexical class could be reported as follows (if using 95\% confidence intervals):
+
+\begin{quote}
+{\footnotesize 
+[coding of lexical class should have been described earlier]  A word's \ttt{lexical\_class} affects its likelihood of being produced: \tsc{function\_words} were less likely than predicates (\tsc{verbs} and \tsc{adjectives})  to be produced  (contrast 1: \Sexpr{logitRegCoeffReport(cdi_cc_mod_1, 'lexical_class1', include.ci=TRUE, include.SE=FALSE)}),  \tsc{nouns} were more likely than predicates (contrast 2: \Sexpr{logitRegCoeffReport(cdi_cc_mod_1, 'lexical_class2', include.ci=TRUE, include.SE=FALSE)}), and \tsc{verbs} and \tsc{adjectives} did not significantly differ (\Sexpr{logitRegCoeffReport(cdi_cc_mod_1, 'lexical_class3', include.ci=TRUE, include.SE=FALSE)}).}
+\end{quote}
+
+An omnibus/post-hoc analysis could be reported as follows:
+
+\begin{quote}
+Words differ significantly by \ttt{lexical\_class} in their likelihood of being produced  (likelihood-ratio test: \Sexpr{lrTestReport(update(cdi_cc_mod_1, . ~ 1), cdi_cc_mod_1)}; odds ratio = \Sexpr{oddsratio_lr(update(cdi_cc_mod_1, . ~ 1), cdi_cc_mod_1)}). Pairwise post-hoc tests were applied to determine which lexical classes significantly differ ($\alpha=0.05$), with $p$-values corrected using the Tukey HSD method; results are shown in Table XX (showing the output of \ttt{pairs(emm\_cdi)}). \tsc{function\_words}, \tsc{verbs}, and \tsc{nouns} were progressively more likely to be produced (\tsc{function\_words} $<$ \tsc{verbs} $<$ \tsc{nouns}), while \tsc{adjectives} were more likely to be produced than \tsc{function\_words} but don't significantly differ from \tsc{verbs} or \tsc{nouns}. 
+\end{quote}
+
+Note that we have included an appropriate effect size for the omnibus test (an odds ratio: Section~\ref{sec:log-reg-lik-ratio}); for all other tests the coefficient estimate is an effect size.
+
+The first example reports test results in the text and the second example in a table; either is fine.  Text-only reports of effects of factors are hard to parse (and very common).  For effects of interest it's a good idea to augment with a figure (``Model predictions for each \ttt{lexical\_class} are shown in Figure~\ref{fig:cc_pred_1}'') or summaries (``\tsc{function\_words} $<$ \tsc{verbs} $<$ \tsc{nouns}, \tsc{function\_words} $<$ \tsc{adjectives}'').
+
+
+% FUTURE: re-incorporate any of this?
+% This kind of writeup is clunky---the relevant information is usually better conveyed by a table and in-text summary (e.g.,\ ``\tsc{function\_words} $<$ \tsc{verbs} $<$ \tsc{nouns}, \tsc{function\_words} $<$ \tsc{adjectives}'')---but very common, especially when reporting ANOVAs. (Recall that ANOVAs are just a special case of regression.)  Even if you don't use ANOVAs, it is worth reading an introduction to this kind of analysis (e.g., XX) because it's one of the most common statistical analyses reported in papers across behavioral sciences, and the writeup is quite opaque if you're not familiar with the terminology.
+
+\end{boxedtext}
+
+For the VOT example,  pairwise comparisons give a simpler result: $\tsc{labial} < \tsc{alveolar} < \tsc{velar}$.
+<<>>=
+vot_emm <- emmeans(vot_cc_mod_1, ~place)
+vot_emm
+@
+
+The confidence intervals of the estimate for each level don't overlap; equivalently, all levels significantly differ (\ttt{contrast(vot\_emm, 'pairwise')}).  
+
+To summarize: For the French CDI example, words differ by lexical class in their likelihood of being produced, but the exact order of lexical classes is unclear (\tsc{function\_words} $<$ \tsc{verbs} $<$ \tsc{nouns}; \tsc{adjectives} unclear).
+%but it's unclear where adjectives lie). 
+For the VOT example, VOT differs by place of articulation in the order \tsc{labial} $<$ \tsc{alveolar} $<$ \tsc{velar}.
+
+\subsection{More on post-hoc tests}
+\label{sec:custom-post-hoc}
+
+While the case above is the most common application (pairwise comparisons after an omnibus test), the general two-step process used for `post-hoc tests'
+%(model predictions, testing differences in predictions) 
+has many useful applications.  We explore some in this and the following section (Section~\ref{sec:interpreting-interactions}), using {emmeans}, one of several packages with this general functionality ({multicomp} is also popular).\footnote{{emmeans}  has broad functionality and excellent documentation, so our exploration only scratches the surface; we highly recommend  the {emmeans} vignettes.}
+%Other packages provide similar functionality (e.g.,\ \ttt{multicomp}), but at this writing none have such broad functionality or excellent documentation (so we don't give much background)
+
+
+% 
+% \section{More on multi-level factors}
+% 
+% \label{sec:multi-level-factors-more}
+% 
+% 
+% While the case of `post-hoc tests' is the most common application (pairwise comparisons after an omnibus test), the general two-step process used (model predictions, testing differences in predictions)  has many useful applications.  We explore some in this and the following section (Section XX), using \ttt{emmeans}. Other packages provide similar functionality (e.g.,\ \ttt{multicomp}), but at this writing none have such broad functionality or excellent documentation (so we don't give much background)
+% 
+% % 
+% % 
+% % In this and the next section we show other useful applications of the general approach behind \ttt{emmeans}: making model predictions, then carrying out hypothesis tests about them. 
+% % 
+% % 
+% % 
+% % \ttt{emmeans} is not the only
+% % 
+% % - Intro: useful additional applications.   throughout exemplify additional functionality of the emmeans package, for making model predictions and carrying out hypothesis tests about them generally. (Has excellent documentation, so we don't explain much.)
+
+{emmeans} contains very general functionality for each of the two steps:
+\begin{enumerate}
+\item Make \textbf{model predictions} as predictors of interest are varied, marginalizing over other predictors.  {emmeans} calculates `estimated marginal means' (hence the name), which are very similar to marginal effects we have discussed previously in the context of model predictions (Section~\ref{sec:viz-effects-logistic}).  {The main difference is that {emmeans} marginalizes over factors using unweighted averages, while tools used previously ({sjPlot}, {margins}) use weighted averages, by default (Box~\ref{box:weighted-unweighted}).}
+
+% FUTURE: we don't need to use both ggeffect and ggemmeans... edit Ch 4/6 to use ggemmeans instead of ggeffect, since the former also does comparisons (which we'll need in Ch 7)?
+
+\item \textbf{Comparisons} of different predictions, often  different levels of a factor.
+
+\end{enumerate}
+
+For our purposes, these steps can always be thought of as plotting model predictions, then assessing whether particular patterns in the plot are real (via hypothesis tests).
+
+% 
+% 
+% - hypothesis tests on these predictions
+% 
+% - can always be thought of as: plotting model predictions, then assessing whether particular patterns in the plot are `real'.
+
+\paragraph{Custom post-hoc tests}
+
+Rather than coding custom contrasts to capture research questions,
+%via an `interpretation matrix',
+as in Section~\ref{sec:custom-contrasts}, one can just carry out post-hoc tests on the fitted model corresponding to these contrasts.  In {emmeans} this is done by specifying the contrasts in a list (rather than an `interpretation matrix', but the idea is the same).
+
+<<>>=
+## Compare to customInterp rows 2-4
+interpVecs <- list(
+  nounBias = c(0, -0.5, -0.5, 1),
+  fwBias = c(-1, 0.5, 0.5, 0),
+  verbVAdj = c(0, -1, 1, 0)
+)
+@
+
+We show the result of the post-hoc tests with confidence intervals rather than $p$-values, to compare to the regression table using custom contrasts (in Section~\ref{sec:custom-contrasts}):
+
+<<>>=
+contrast(emm_cdi, method = interpVecs) %>% confint()
+@
+
+The results are the same.  This illustrates how `contrast coding' can be thought of as a special case of `post-hoc tests'. This is useful because contrast coding can be difficult to implement or interpret. \textbf{It is always an option to just fit the model} with any coding scheme, \textbf{then use post-hoc tests to assess the hypotheses of interest}---regardless of whether they were `planned'---and correcting for multiple comparisons if you examine more than $k-1$ tests.
+
+
+
+
+
+
+% 
+% 
+% -- in other words: contrast coding can be thought of as a special case of post-hoc tests (elaborate). This is useful, because contrast coding is notoriously difficult to interpret, especially once interactions are involved (below).
+% 
+% But if you want to make $k-1$ comparisons, you can either choose a contrast coding scheme which implements these comparison *or* just fit the model with any coding scheme and carry out $k-1$ post-hoc tests on the fitted model.   (Example: Vaughn/Kendall paper)
+% 
+
+\section{Interpreting interactions}
+\label{sec:interpreting-interactions}
+
+
+Often the effects of interest in a regression model are interactions involving multi-level factors, or including three or more predictors (`three-way' interactions).  We show some examples of unpacking such interactions using the methods above.
+
+\subsection{Post-hoc trends}
+\label{sec:post-hoc-trends}
+
+First, consider the case of a {continuous} $x_1$ interacting with a factor $x_2$.   The regression coefficients for the interaction describe how the slope of $x_1$ {changes} across levels of the factor, corresponding to the contrasts, but it is often of interest to know the actual slope  of $x_1$ at different levels of $x_2$.  {emmeans} can calculate these `trends' post-hoc.
+
+For example, consider the final \ttt{diatones} model, \ttt{mlogreg\_mod\_3}, from Section~\ref{sec:diatones-mod-2}. There were significant interactions of \ttt{frequency} with two aspects of syllable structure (\ttt{syll1\_coda}, \ttt{syll2\_td}), pictured in Figure~\ref{fig:mlogreg-eff-2}, which describe how the frequency effect differs between groups of words. The general finding was that words with more `change-promoting structure' have a greater \ttt{frequency} slope. But in this case the actual value of the frequency effect for each group of words is of theoretical interest---a (significantly) positive or negative slope corresponds to different cognitive mechanisms.  
+
+To examine this, we first refit the model using the factor versions of the  predictors \ttt{frequency} interacts with:
+
+<<>>=
+mlogreg_mod_4 <- update(mlogreg_mod_3, . ~ syll2_coda +
+  frequency * syll1_coda_orig + syll2_td_orig * frequency)
+@
+
+(It is often good to refit the model with factors coded as factors rather than numeric before post-hoc analyses; it makes the output cleaner.)
+
+The \ttt{emtrends()} function determines the slope of a continuous predictor as other predictors of interest are varied (marginalizing over remaining predictors)---analogously to \ttt{emmeans()}'s estimates at each level of a categorical predictor.  In this case:
+
+% \ttt{emtrends}: determines *slope* of continuous predictor (the `trend'), as 1+ categorical predictors varied (marginalizing over other predictors)---analagous to emmeans determining estimates at levels of a categorical predictor.
+
+<<>>=
+emtrends(mlogreg_mod_4, ~ syll1_coda_orig + syll2_td_orig, 
+  var = "frequency")
+@
+
+From the 95\% confidence intervals: a \textbf{negative} slope for frequency is predicted for words with minimal change-promoting structure (no syllable 1 coda or t/d in syllable 2 coda), while a \textbf{positive} slope is predicted for words with maximal change-promoting structure (and for other words, the confidence interval includes 0).  So the post-hoc trends let us conclude that the \ttt{frequency} effect actually does change sign across different groups of words---which is more theoretically meaningful than the conclusion just from the regression model, that the \ttt{frequency} effect changes as a function of syllable structure.
+
+% - Examining the 95\% CIs: a *negative* slope for frequency is predicted for words with minimal `change-promoting structure'; a *positive* slope for frequency predicted for words with the most structure.  So we can conclude that (...).
+
+% \section{Interactions II}
+
+
+\subsection{Example: Two-way interactions}
+\label{sec:vot-two-way-ixns}
+
+Let's return to the final multiple regression model we fit for the \ttt{vot\_michael} data in Section~\ref{sec:gh-method-example} (Model \ttt{gh\_mod\_3})---but now letting the variable \ttt{place} have three levels (previously we collapsed to \ttt{place} = \tsc{labial}/non-\tsc{labial} for simplicity).
+%\tsc{labial}, \tsc{alveolar}, and \tsc{velar}.
+
+We will focus on interactions with \ttt{place} in this model.  The \tsc{labial} $<$ \tsc{alveolar} $<$ \tsc{velar} ordering for VOT has been observed across many languages and is assumed to have a physiological basis; it is thus of theoretical interest whether this pattern \textbf{always} holds, for different kinds of words (e.g.,\ voiced vs. voiceless stops).  The ordering \tsc{labial} $<$ non-\tsc{labial} is very consistent in previous work, while the relative order of \tsc{alveolar} and \tsc{velar} is less so. So it makes sense to code \ttt{place} using Helmert contrasts, whose interpretations are \tsc{alveolar} versus\ \tsc{velar} and \tsc{labial} versus\ non-\tsc{labial}.
+
+% 
+% -- update model from Ch 5 so place now has 3 levels.   
+% 
+% - Let's focus on interactions with \ttt{place} in the VOT data---it is of theoretical interest whether the order \tsc{labial} $<$ \tsc{alveolar} $<$ \tsc{velar} is maintained for diff kinds of words.  in previous work the labial vs. other ordering is consistent, alveolar/velar not as much.  So let's code as Helmert contrasts:interpretation alveolar-velar, labial vs non-labial: 
+
+<<>>=
+## Reverse levels so Helmert coding works
+vot_michael$place <-
+  fct_relevel(vot_michael$place, c("velar", "alveolar", "labial"))
+
+contrasts(vot_michael$place) <- contr.helmert(3)
+
+## Give contrasts better names
+colnames(contrasts(vot_michael$place)) <- c("TvK", "PvTK")
+@
+These contrast names abbreviate \tsc{labial}/\tsc{alveolar}/\tsc{velar} as P/T/K. 
+
+Refitting the model with our current \ttt{vot\_michael} dataframe, \ttt{place} will now be a three-level factor. 
+
+<<>>=
+## Same model formula as gh_mod_3
+gh_mod_4 <- lm(log_vot ~ voicing*(speaking_rate + cons_cluster +
+    place) + foll_high_vowel*place + log_corpus_freq, data = vot_michael)
+@
+
+It is a good idea to look at the model summary (\ttt{tidy(gh\_mod\_4)}); we will highlight relevant parts below.
+
+To unpack the effect of \ttt{place}, as for any interaction effect,
+we examine model predictions together with the results of statistical tests.  
+
+\subsubsection{Model predictions}
+
+%For model predictions: as in  Section~\ref{sec:viz-effects-logistic}, 
+We plot the marginal effects of the model as predictors of interest are varied (as in  Section~\ref{sec:viz-effects-logistic}). For example, the marginal effects as \ttt{place} and \ttt{voicing} are varied are:
+
+<<>>=
+emmeans(gh_mod_4, ~ place * voicing)
+@
+
+Figure~\ref{fig:cc_int_ex_1} (code not shown) plots these marginal effects, as well as those when 
+%\ttt{place} and \ttt{voicing} are varied, and as 
+\ttt{place} and \ttt{foll\_high\_vowel} are varied.
+%(similarly to Section~\ref{sec:viz-effects-logistic}). That is, the plots (code not shown) just visualizes the modelThese model predictions come from emmeans plots simply show the outputs of these emmeans calls:
+% 
+% <<eval=FALSE>>=
+% emmeans(gh_mod_4, ~place*voicing)
+% emmeans(gh_mod_4, ~place*foll_high_vowel)
+% @
+% 
+% That is, 
+% 
+% % 
+% 
+% The code (not shown) is similar to Section~\ref{sec:viz-effects-logistic}, but now effectively  Effectively 
+% 
+% To obtain model predictions, as in Section~\ref{sec:viz-effects-logistic}), we compute the marginal effects as predictors of interest are varied, then plot them.   For example, the marginal effects as \ttt{place} and \ttt{voicing} are varied are shown in Figure~\ref{fig:cc_int_ex_1} shows the 
+% 
+% - how to unpack the effect of \ttt{place}? As with any interaction (...-Sec): use plots with stat tests.  
+% 
+% - Predictions: as in Section~\ref{sec:viz-effects-logistic}, get  marginal effects of voicing:place and voicing:vowel interactions, then 
+% plot them: Figure~\ref{fig:cc_int_ex_1}.  For example, the marginal effects as \ttt{place} and \ttt{voicing} are varied:
+% 
+% <<>>=
+% emmeans(gh_mod_4, ~place*voicing)
+% @
+
+
+<<cc_int_ex_1, echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.asp=.8, fig.cap='Interaction plots of predicted \\ttt{vot} as a function of \\ttt{place} and \\ttt{voicing}, and of \\ttt{place} and \\ttt{foll\\_high\\_vowel}, marginalizing over other predictors.'>>=
+## using ggemmeans rather than ggeffect makes emmeans rather than Effects package be used for model predictions
+df1 <- ggemmeans(gh_mod_4, terms = c("place", "voicing")) %>%
+  data.frame() %>%
+  mutate(x = fct_relevel(x, "velar", "alveolar", "labial"))
+
+ggplot(aes(x = x, y = predicted), data = df1) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high, shape = group)) +
+  geom_line(aes(shape = group, group = group, lty=group)) +
+  labs(x="Place of articulation",
+       y="Predicted VOT (log)") +
+  scale_color_discrete(name = "Voicing") +
+  theme(legend.position = "bottom")
+
+df2 <- ggemmeans(gh_mod_4, terms = c("place", "foll_high_vowel")) %>%
+  data.frame() %>%
+  mutate(x = fct_relevel(x, "velar", "alveolar", "labial"))
+
+ggplot(aes(x = x, y = predicted), data = df2) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high, shape = group)) +
+  geom_line(aes(shape = group, group = group, lty=group)) +
+  labs(x="Place of articulation",
+       y="Predicted VOT (log)") +
+  scale_color_discrete(name = "Foll. high vowel") +
+  theme(legend.position = "bottom")
+@
+
+% It looks like the  the \tsc{velar}/\tsc{alveolar} difference may not differ between \tsc{voiced} and \tsc{voiceless} stops, while the \tsc{labial}/non-\tsc{labial} difference does.  These observations correspond to the two \tsc{voicing}:\ttt{place} terms:
+
+It looks like there is substantial variation in the \ttt{place} effect as a function of covariates. At this point we can proceed either via contrast coding or omnibus/post-hoc tests to understand the interactions; in either case, the idea is to determine which patterns seen in the plots are `real'.
+
+\subsubsection{Approach 1: Contrast coding}
+\label{sec:vot-two-way-ixns-cc}
+
+
+Consider the terms of the regression table involving \ttt{place}:
+
+<<>>=
+tidy(gh_mod_4) %>% filter(str_detect(term, "place"))
+@
+
+\ttt{voicing} and \ttt{foll\_high\_vowel} have been `centered' automatically (via Helmert contrasts), so we can interpret the main effect of \ttt{place} as an `average' effect (marginalizing over voicing and vowel height). On average, \tsc{labial} $<$ non-\tsc{labial}, but \tsc{alveolar} and \tsc{velar} do not reliably differ.
+
+Turning to interactions: the  \ttt{voicing:placeTvK} contrast has a small magnitude and high $p$-value, reflecting the very similar \tsc{velar}/\tsc{alveolar} difference for \tsc{voiced} and \tsc{voiceless} stops.  The significant \ttt{voicing:placePvTK} contrast captures the larger \tsc{labial}/non-\tsc{labial} difference  for \tsc{voiced} stops.  
+
+For interactions with vowel height, the \tsc{alveolar}/\tsc{velar} difference is larger when the following vowel is \tsc{high} (contrast \ttt{foll\_high\_vowel:placeTvK}), and the \tsc{labial}/non-\tsc{labial} difference is smaller (contrast \ttt{foll\_high\_vowel:placePvTK}). (The sign of the latter is confusing just working from the regression table, but it's clear from the plot what effect is being captured.)  Both contrasts are significantly different from zero.
+
+<<>>=
+c0 <- coefficients(gh_mod_4)[['(Intercept)']]
+c1 <- coefficients(gh_mod_4)[['placePvTK']]
+c2 <- coefficients(gh_mod_4)[['voicing1:placePvTK']]
+
+minPvTK <- min(abs(c1-c2), abs(c1+c2))
+maxPvTK <- max(abs(c1-c2), abs(c1+c2))
+
+minPvTK_ms <- exp(c0 + minPvTK) - exp(c0)
+maxPvTK_ms <- exp(c0 + maxPvTK) - exp(c0)
+@
+
+
+Qualitatively, the result is that the \tsc{labial} $>$ non-\tsc{labial} pattern is maintained across different word types (contrast 2), but its magnitude differs, while the \tsc{alveolar} $<$ \tsc{velar} pattern does not consistently hold (contrast 1).\footnote{Specifically, we can calculate from the model coefficients that the magnitude of the \tsc{labial}/non-\tsc{labial} difference varies between  \Sexpr{minPvTK} and \Sexpr{maxPvTK} in \ttt{log\_vot}, which corresponds to differences of \Sexpr{minPvTK_ms} and \Sexpr{maxPvTK_ms} msec in \ttt{vot} (evaluated at the intercept).  See code file for calculation.}
+
+
+%is confusing just from the regression table, but \footnote{The latter may be confusing because the interaction coefficient is \textbf{positive}. The main effect \ttt{placePvTK} is negative, so the interaction term means the \tsc{labial}/\non-\tsc{labial} difference is less negative when \ttt{foll\_high\_vowel} is \tsc{yes} (and thus, its magnitude is smaller). }
+
+
+
+
+% - For the \ttt{voicing}:\ttt{foll\_high\_vowel} interaction: when the following vowel is high, the alveolar/velar difference is larger (row 1), and the non-labial/labial difference is smaller (row 2).
+
+\subsubsection{Approach 2: Omnibus/post-hoc tests}
+\label{sec:vot-two-way-ixns-ph}
+
+% We first check that the \ttt{place} effect sigificantly varies by \ttt{voicing} and by \ttt{foll\_vowel\_high}, using two model comparisons ($F$-tests):
+
+An $F$ test comparing models with and without the \ttt{voicing:place} interaction shows that the place effect significantly differs between voiced and voiceless stops:
+
+<<output.lines=6:8>>=
+drop1(gh_mod_4, "voicing:place", test = "F")
+@
+
+Similarly, the \ttt{place} effect differs between high and non-high vowels:
+
+<<output.lines=6:8>>=
+drop1(gh_mod_4, "place:foll_high_vowel", test = "F")
+@
+
+Since both interactions are significant, we proceed to post-hoc tests examining which \ttt{place} levels differ, for each value of \ttt{voicing}: 
+
+<<>>=
+emm <- emmeans(gh_mod_4, ~ place | voicing)
+contrast(emm, "pairwise")
+@
+
+Regardless of \ttt{voicing}, \tsc{labial} stops have significantly lower VOT than \tsc{velar} or \tsc{alveolar} stops while \tsc{velar} and \tsc{alveolar} stops do not reliably differ.  
+
+Post-hoc tests for the \ttt{place:foll\_high\_vowel} interaction give a similar result:
+
+<<>>=
+contrast(emmeans(gh_mod_4, ~ place | foll_high_vowel), "pairwise")
+@
+
+These post-hoc tests can be summarized as ``\tsc{labial} $<$ \tsc{alveolar} $=$ \tsc{velar}---regardless of stop voicing or following vowel height.''  So VOT differences between places of articulation are modulated by stop voicing and following vowel height (omnibus test), but not enough to actually change the qualitative \ttt{place} effect for any subset of words (post-hoc tests).
+%(More precisely, there is not enough evidence to conclude that the qualitative \ttt{place} effect differs, only that the magnitude of)
+
+
+
+
+
+\subsection{Example: Three-way interaction}
+\label{sec:three-way-example}
+
+Let's now add a three-way interaction involving \ttt{place} to the VOT model continuing the Gelman \& Hill method begun in Section~\ref{sec:gh-method-example} (where we only considered two-way interactions) by considering interactions between predictors with large effects.  We are interested in \ttt{place}, and don't have a priori motivation for any three-way interaction, so we simply add a three-way interaction involving place which significantly improves the model (and builds on already-significant interactions): \ttt{place:voicing:cons\_cluster}.
+
+%(When constructing the original model in chap. XX, only two-way interactions were considered.)
+
+%FUTURE: simpler example with just 2x2x2 design, in addition. (or just say will come back to it in a later example...)
+
+<<output.lines=6:11>>=
+# F-test showing this term significantly improves the model
+add1(gh_mod_4, "place:cons_cluster:voicing", test = "F")
+
+# New model
+gh_mod_5 <- update(gh_mod_4, . ~ . +
+  cons_cluster * place * voicing, data = vot_michael)
+@
+
+(We leave as Exercise~\ref{ex:vot-three-way} to verify there are no other three-way interactions which should be added.)  
+
+%predicted effect of \ttt{place} as \ttt{voicing} and \ttt{cons\_cluster} are varied for this model (marginalizing over other predictors). 
+
+<<cc_int_ex_2, echo=FALSE, fig.asp=.34, out.width='90%', fig.width=default_fig.width*.9/default_out.width, fig.cap='Interaction plot of \\ttt{place}, \\ttt{voicing}, and \\ttt{cons\\_cluster} for model \\ttt{gh\\_mod\\_5}, marginalizing over other predictors.'>>=
+## using ggemmeans rather than ggeffect makes emmeans rather than Effects package be used for model predictions
+df1 <- ggemmeans(gh_mod_5, terms = c("place", "voicing", "cons_cluster")) %>%
+  data.frame() %>%
+  rename(cons_cluster = facet) %>%
+  mutate(x = fct_relevel(x, "velar", "alveolar", "labial"))
+
+ggplot(aes(x = x, y = predicted), data = df1) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high, shape = group)) +
+  geom_line(aes(shape = group, group = group, lty=group)) +
+  xlab("Place of articulation") +
+  ylab("Predicted VOT (log)") +
+  scale_color_discrete(name = "Voicing") +
+  facet_wrap(~cons_cluster, labeller = "label_both")
+@
+
+Figure~\ref{fig:cc_int_ex_2} shows model predictions for this case. 
+ It looks like the \ttt{place} effect varies a lot as a function of consonant cluster and stop voicing, but it is hard to puzzle out from the regression table exactly what about this pattern the three-way interaction is capturing.  Instead it is easier to do (pairwise) post-hoc tests examining the \ttt{place} effect as the other two predictors are varied.
+  
+% 
+% - Three-way interaction here -- can be justified by GH method (it contributes). don't even show summary, but look for yourself -- hard to puzzle out from plot what the interaction means.
+% 
+% - Instead, given that place effect is of interest --omnibux test, then post-hoc tests looking at place effect by voicing and cons cluster.
+
+<<>>=
+gh_mod_5_emm <- emmeans(gh_mod_5, ~ place | voicing + cons_cluster)
+contrast(gh_mod_5_emm, "pairwise")
+@
+
+Abbreviating \tsc{labial}/\tsc{alveolar}/\tsc{velar} as P/T/K, these post-hoc tests can be summarized as:
+\begin{itemize}
+\item \ttt{voiced}, \ttt{no} consonant cluster: P$<$T$=$K
+\item \ttt{voiceless}, \ttt{no}: P$<$T$=$K
+\item \ttt{voiced}, \ttt{yes}: P$<$K$<$T
+\item \ttt{voiceless}, \ttt{yes}: P$<$K
+\end{itemize}
+% % 
+% % V, N: P $<$ T = K
+% % 
+% % VL, N: P $<$ T = K
+% % 
+% % V, Y: P $<$ K $<$ T
+% 
+% VL, Y: P $<$ K
+
+Across word types \tsc{labial} $<$ \tsc{velar}, while the placement of \tsc{alveolar} is inconsistent (but never lower than \tsc{labial}: \tsc{labial} $\le$ \tsc{alveolar}). Interestingly, for one word type (voiced stops in consonant clusters)  \tsc{alveolar} stops have the highest VOT, which is  theoretically unexpected.
+
+% -- So: P$<$K is consistent, $T$ is inconsistent, and for part of data K$<$T.
+% 
+% already added a box on this to Ch 4
+% \begin{boxedtext}{Broader context: Lower-order terms in interactions}
+% 
+% Recall that the interaction notation \ttt{x*y*z} means ``the \ttt{x:y:z} interaction and all lower-order terms'' (\ttt{x:y}, \ttt{x}, \ttt{y:z}, and so on). For example, when  \ttt{voicing*cons\_cluster*place} was added to model \ttt{gh\_mod\_4}, this automatically added a \ttt{cons\_cluster:place} term; all other lower-order terms were already included.
+% 
+% 
+% \end{boxedtext}
+
+\subsection{Two interaction fallacies}
+
+Interaction effects are often central to what a regression analysis says about research questions.
+%often turns on interaction effects. 
+It is therefore  important to understand exactly what can be concluded from an interaction (whether using contrast coding or an omnibus test), versus post-hoc tests for individual levels,  to avoid two common fallacies. 
+%(Misinterpretations are less common/harder to commit using contrast coding.)
+
+\subsubsection{A significant interaction does not imply qualitative differences between levels}
+
+Consider the significant interactions with \ttt{placeTvK} in the VOT model from \ttt{gh\_mod\_4}; the terms of the regression table involving \ttt{place} are in Section~\ref{sec:vot-two-way-ixns-cc} (or run \ttt{summary(gh\_mod\_4)}).
+
+These interactions mean that the \tsc{alveolar}/\tsc{velar} VOT difference differs between groups of words (depending on stop voicing and following vowel height).  This doesn't directly address the research question, which is what the relative order of levels are: here, \tsc{alveolar} and \tsc{velar}. Finding \tsc{alveolar}$>$\tsc{velar} for any group of words would be theoretically interesting and unexpected, while \tsc{alveolar} $<$ \tsc{velar} is expected.  
+
+Given that the \textbf{main effect} is effectively zero (\ttt{placeTvK}: $\hat{\beta} = \Sexpr{column_to_rownames(tidy(gh_mod_4), 'term')['placeTvK','estimate']}$, \Sexpr{formatP(column_to_rownames(tidy(gh_mod_4), 'term')['placeTvK','p.value'])})---meaning the \tsc{alveolar}/\tsc{velar} difference, averaged across the data---it is tempting to infer that the interactions mean ``\tsc{alveolar} $<$ \tsc{velar} for some groups of words and \tsc{alveolar} $>$ \tsc{velar} for others'' (as \ttt{voicing}, \ttt{foll\_high\_vowel} are varied).  But this is not the case: the post-hoc tests (Section~\ref{sec:vot-two-way-ixns-ph}) show that the \tsc{alveolar}/\tsc{velar} difference is not significant for any group of words.  For this data there is enough evidence to conclude that the \tsc{alveolar}/\tsc{velar} difference varies between groups, but not enough to conclude that its sign changes.
+%\footnote{For example, it is possible that in reality \tsc{alveolar} $<$ \tsc{velar} always, but the magnitude of the difference is small and varies a lot.} 
+So the analysis is inconclusive with respect to the theoretical question.
+
+% 
+% - Consider the significant T/K inteactions in VOT model---meaning is, T/K difference significantly differs between voiced and voiceless stops. That doesn't directly address RQ, which is relative ordering of T and K.  from model predictions, might think we could interpret this as T$>$K for voiceless(?), T$<$K for voiced. Finding T$>$K in *any* subset of words would be theoretically important (because XX).  However, we see from the post-hoc tests that the T/K difference is non-significant both for voiced and for voiceless stops. So at least with this evidence, we can just say XX, not XX.
+
+\subsubsection{Qualitative differences between levels does not imply a significant interaction}
+
+Showing that the effect of a predictor $x_1$ differs between groups A and B, indexed by predictor $x_2$, requires a (significant) $x_1:x_2$ interaction.  It is very common to instead test for an effect of $x_1$ separately in group A and in group B, find a significant effect in one group and not the other, then conclude that A and B differ in the effect of $x_1$. This is incorrect, because ``the difference between significant and not significant is not itself necessarily significant'' \citep[][]{nieuwenhuis2011erroneous}.\footnote{We consider the case where `separately' means `conduct post-hoc tests'. It is  common to actually fit two different regressions, one testing the effect of $x_1$ in each group, in which case there are further issues (loss of power) but the basic problem is the same.}  
+%differences in significance in an effect between groups doesn't imply the effect signficantly differs by group. 
+
+For instance, consider  the example from Section~\ref{sec:ixn-example}: the \ttt{voicing}:\ttt{prosodic\_boundary} interaction for the \ttt{neutralization} data (model \ttt{mlr\_mod\_3}).  Of interest is whether the \ttt{voicing} pattern (\tsc{voiced} $>$ \tsc{voiceless}) differs depending whether there is a prosodic boundary. Suppose we are using $\alpha=0.01$ to decide what effects are significant.  Plots of this interaction (Figure~\ref{fig:mlr-mod-3-plots} left) suggest the expected \ttt{voicing} effect is present (= significantly different from zero) only when there is a prosodic boundary. We can confirm this using post-hoc tests:
+
+<<echo=5:6>>=
+# So this chapter works in isolation
+mlr_mod_3 <- readRDS("objects/mlr_mod_3.rds") 
+neutralization <- model.frame(mlr_mod_3) 
+
+mlr_mod_3_emm <- emmeans(mlr_mod_3, ~ voicing | prosodic_boundary)
+contrast(mlr_mod_3_emm, "pairwise")
+@
+
+However, the actual \ttt{voicing}:\ttt{prosodic\_boundary} interaction is not significant at the $\alpha=0.01$ level (model table in Section~\ref{sec:ixn-example}):
+
+<<>>=
+tidy(mlr_mod_3) %>%
+  select(term, estimate, p.value) %>%
+  # Extract row where 'term' contains ':' character
+  filter(str_detect(term, "\\:"))
+@
+
+In other words---there is evidence that there is a \ttt{voicing} effect for stops before prosodic boundaries, but not enough to say anything about whether there is a \ttt{voicing} effect for other stops, or whether a prosodic boundary modulates the \ttt{voicing} effect.  
+
+This general fallacy is extremely common in other fields (Box~\ref{sec:p-value-misconceptions}), and probably in language sciences as well. 
+
+\section{Nonlinear effects}
+
+\label{sec:nonlinear-effects}
+
+\subsection{Motivation: Nonlinear smoothers}
+\label{sec:nonlinear-smoothers}
+
+So far we have always assumed that continuous variables have a relationship with the response that is linear---well-described by a straight line. In reality this is often not the case.
+
+Consider the plots in Figure~\ref{fig:slr-ex-2}, of data from Section~\ref{sec:example-small-subset}, both of which are plotted with a `smoother' (with 95\% CIs)---a function estimated by R to describe an $x$-$y$ scatterplot (here, using \ttt{geom\_smooth()} from ggplot2).  The left plot shows the most straightforward smoother: the least-squares line of best fit, with its 95\% CIs.
+
+
+<<slr-ex-2, echo=FALSE, out.width='90%', fig.width=default_fig.width*.90/default_out.width, fig.asp=.5, fig.cap='Least-squares regression line (left) and LOESS smooth (right) for \\ttt{english\\_young}.'>>=
+p1<-ggplot(english_young, aes(WrittenFrequency, RTlexdec)) +
+  geom_point(alpha = 0.3, size = 0.1) +
+  geom_smooth(color=default_line_color, method = "lm") +
+  labs(subtitle="Linear")
+
+p2<-ggplot(english_young, aes(WrittenFrequency, RTlexdec)) +
+  geom_point(size = 0.1, alpha = .3) +
+  geom_smooth(color=default_line_color, method = "loess") + 
+  labs(subtitle="Smooth")
+
+p1 + p2 + plot_annotation(title = "Regression lines and 95% CIs")
+@
+
+
+
+
+The right plot shows a \emph{nonparametric smoother}: a smooth curve interpolated based on nearby observations. There are different ways to do this; \ttt{geom\_smooth} uses the LOESS method for small samples and generalized additive modeling (GAM) for large samples.\footnote{LOESS is better for visualization, but too slow for large samples (see \ttt{?geom\_smooth}).} It is fine for our purposes to treat both as black boxes (Box~\ref{box:nonparam-more})
+%Box~\ref{box:nonparam-param}). 
+The intuition in each case is similar: draw a smooth curve that fits the data in an $x$-$y$ scatterplot `locally' (nearby points).
+%(good fit for nearby points).
+
+
+%the right plot, where we force a line (using the \ttt{method=lm} argument to \ttt{geom\_smooth}). 
+
+\begin{boxedtext}{Broader context: More on nonparametric smoothers}
+\label{box:nonparam-more}
+
+% FUTURE: any more on loess, gamm's? the two references in text are brief. LOESS also discussed in Zuur 2007 I think.  ANy more discuss at end of box?
+
+LOESS-style smoothers are described widely, e.g.,\  \citet[][\S14.3]{faraway2016extending}, and the tutorials below
+%(especially \citealp{soskuthy2017generalised}) 
+introduce GAMs and the intuitions behind them.  Both methods are  `nonparametric' in the sense that the relationship between $x$ and $y$ can't be described by a set of parameters (like e.g.,\ a polynomial).
+
+In addition to the linear versus nonlinear relationship, an important difference between parametric and non-parametric smoothers is in their confidence intervals.   For the linear smoother the width of the confidence interval increases for points further from the mean, because they are more influential for the fit (Section \ref{sec:influence}), while for the nonlinear smoother the width is determined by nearby points. 
+% for the linear smoother, because (average of \texttt{WrittenFrequency}, average of \texttt{RTlexdec}), because these points are more influential
+% Interval widths are related to the distance from the mean for the linear smoother (as discussed in XX), versus the amount of data nearby for the nonlinear smoother.  
+
+% Sometimes both linear and non-linear lines are plotted on top of each other in publications, for example to show to what extent the linearity assumption assumed by a regression model holds.
+
+In the regression models presented in this book,  a nonparametric smoother can only be used for visualization of the effect of $x$ on $y$---capturing the  effect in a model requires a parametric function.  This approach gets complicated quickly, and typically we care about modeling the non-linear relationship but not the exact parameters, so it would be nice to just include a non-parametric smoother in the model.  \emph{Generalized additive models} are a generalization of regression models allowing this, which are increasingly popular across language sciences, especially for modeling time dependence (e.g.,\ in pitch contours) or spatial dependence (e.g.,\ dialect variation). \citet{soskuthy2017generalised,wieling2018analyzing,chuang2021analyzing} are recent tutorials
+%example for modeling time-dependence in laboratory data or language change \citep{winter2016analyze,tamminga2016generalized}, or spatial dependence in dialectological data \citep{wieling2011quantitative}.
+%\citep[e.g.,][]{tamminga2016generalized,winter2016analyze}, ); 
+%\citet{wieling2018analyzing,soskuthy2017generalised} are tutorials 
+using the {mgcv} package.  GAMs can model nonlinear relationships more easily, using `smoothing splines', but their results are harder to interpret (and they are trickier to fit for realistic cases, using current functionality).  It is a bit harder to include nonlinear relationships in regression models as parametric terms (the option we cover here), but the models are easier to interpret and fit.  
+
+Which option makes sense depends on context---is the additional complexity of GAMs worthwhile given the research questions?  More important than the method used is that clearly non-linear relationships in your data are \textbf{somehow} modeled as such.
+
+\end{boxedtext}
+
+
+In any case, the right plot better characterizes the $x$-$y$ relationship, which is \emph{nonlinear} (not a line).   To model a nonlinear relationship in a regression model, we need a way to represent it `parametrically'---by a set of $k$ parameters (e.g.,\ the coefficients of a quadratic function: $k=2$), which can be estimated as terms of a regression model.
+These parameters are multiplied by a series of `component' functions to describe the fitted $x$-$y$ relationship; the set of functions is called the \emph{basis}.  Two common bases used for nonlinear effects in regression models are polynomials and splines.
+
+We can fit increasingly complex functions by increasing $k$ (the \emph{degree}), and need to choose a value that neither underfits ($k$ too small) or overfits (too large).
+
+% FUTURE: maybe rewrite closer to the old version -- first introduce polynomials, then introduce any terminology. and less terminology OK
+
+%A parametric function requires choosing a \emph{basis}: the functions which are added together to Two common ways of representing non-linear functions in regression models are polynomials and splines.
+
+\subsection{Polynomials}
+\label{sec:polynomials}
+
+The simplest basis is regular polynomials.  The components are just $x, x^2, \ldots, x^k$. (A linear relationship is the special case where $k=1$.)  Section~\ref{sec:nl-effects-polynomials} showed a cubic polynomial ($k=3$) fit to the \ttt{english\_young} data.
+A polynomial effect of degree $k$ can be fit by including either a series of terms like \ttt{I(WrittenFrequency\^2)} in the model formula (as in Section~\ref{sec:nl-effects-polynomials}), or a single \ttt{poly(x, k)} term.  
+
+
+
+Figure~\ref{fig:poly-over-under} shows increasingly complex polynomial functions fitted to the \ttt{english\_young} data ($k=2, 4, 10$), fitted using these models:
+
+<<poly-over-under, echo=1:9, out.width='90%', fig.width=default_fig.width*.9/default_out.width, fig.asp=.34, fig.cap='Polynomial effects of \\ttt{WrittenFrequency} on \\ttt{RTlexdec}, for the  \\ttt{english\\_young} data.'>>=
+## raw=TRUE: use regular polynomials
+## The 'poly' term expands to WF + I(WF^2)
+eng_poly2 <- lm(RTlexdec ~ poly(WrittenFrequency, 2, raw = TRUE),
+  data = english_young)
+eng_poly4 <- update(eng_poly2, . ~ 
+    poly(WrittenFrequency, 4, raw = TRUE))
+eng_poly10 <- update(eng_poly2, . ~ 
+    poly(WrittenFrequency, 10, raw = TRUE))
+
+alpha <- 0.01
+upper99 <- quantile(english_young$WrittenFrequency, 1 - alpha / 2)
+lower99 <- quantile(english_young$WrittenFrequency, alpha / 2)
+
+nd <- data.frame(WrittenFrequency = seq(lower99, upper99, length.out = 100), AgeSubject = "young")
+
+tempFun <- function(mod, deg, nd) {
+  data.frame(
+    pred = predict(mod, nd), degree = deg,
+    WrittenFrequency = nd$WrittenFrequency
+  )
+}
+
+bind_rows(
+  tempFun(eng_poly2, 2, nd),
+  tempFun(eng_poly4, 4, nd),
+  tempFun(eng_poly10, 10, nd)
+) %>%
+  mutate(degree = factor(degree)) %>%
+  ggplot(aes(x = WrittenFrequency, y = pred)) +
+  geom_line() +
+  ylab("Predicted RTlexdec") +
+  facet_wrap(~degree, labeller = labeller(.cols = label_both))
+@
+
+Comparing to the plot of the empirical data (Figure~\ref{fig:slr-ex-2} right), it is visually clear that $k=2$ is not complex enough (`underfits') and $k=10$ is too complex (`overfits'). 
+% FUTURE: this actually isn't a clear example, given the empirical data, and doesn't illustrate what overfitting looks like for polynomial with more terms -- want to see wiggles.  (tried english_40, but nonlinear term not justified)  maybe a simple French CDI example -- one word, percentage of kids over time who know it?
+% 
+% Ex:
+% filter(french_cdi, definition=='cirque') %>% group_by(age) %>% summarise(percent=mean(produces, na.rm=TRUE)) -> cirque
+% now model this for k=1, 2, 3, 7 -- overfitting clear, especially if you go just a little above/below (we know in this case what the `real' relationship is -- unlikely *fewer* kids will know word over time).
+%
+% `chien' is also a good one:
+% filter(french_cdi, definition=='chien') %>% group_by(age) %>% summarise(percent=mean(produces, na.rm=TRUE)) %>% ggplot(aes(x=age, y=percent)) + geom_point()
+
+Choosing a basis for a nonlinear function means `coding' $x$ as the components  $f_1(x) = x$, $f_2(x) = x^2$, etc., analogously to coding a categorical $x$ using contrasts.  By the same logic as for contrast coding schemes (model interpretability, minimizing collinearity), it is desirable for components to be centered and orthogonal---here meaning that each component should average to zero over the dataset, and any two components should be uncorrelated.  Regular polynomials have neither of these properties, so they should typically be avoided.
+%\footnote{For example, $x$ and $x^3$ will be correlated in most datasets (because increasing/decreasing $x$ has the same effect on $x^3$ for any $x$), leading to unnecessary collinearity.}  
+
+Nonetheless, regular polynomials have the advantages of simplicity and coefficients which are easiest to interpret ($x^2$ always means the same thing, regardless of the dataset) and they are widely used.
+
+\subsection{Orthogonal polynomials}
+
+\emph{Orthogonal polynomials} are a basis where each component is constructed to be centered and orthogonal to other components, on this dataset: $f_1(x)$ is a linear function (with mean zero), $f_2(x)$ is a quadratic function uncorrelated with $f_1(x)$ (and with mean zero), and so on.  For example, Figure~\ref{fig:basis-function-ex} (left) shows components for the $k=4$ case, for the \ttt{english\_young} dataset.\footnote{In the R implementation of orthogonal polynomials the components are chosen to each have norm of 1, meaning $f_i(x)^2$ sums to 1 over the dataset, but this is not necessary. Note that `orthogonal polynomial coding' for a factor with $k$ levels is the same as converting to a numeric variable (1, 2, 3, $\ldots$) then using orthogonal polynomials as predictors (e.g.,\ Figure~\ref{fig:poly-contrasts}).}
+
+
+
+<<basis-function-ex, out.width='90%', fig.width=default_fig.width*.9/default_out.width, fig.asp=.34, echo=FALSE, fig.cap='Orthogonal polynomial (left) and natural spline (right) components for the \\ttt{english\\_young} data.'>>=
+freq <- english_young$WrittenFrequency
+ns4Mat <- ns(freq, 4)
+poly4Mat <- poly(freq, 4)
+
+basisDf <- map_df(1:4, ~ data.frame(
+  freq = freq,
+  componentNumber = .,
+  basis = "orth. polynomials",
+  value = poly4Mat[, .]
+)) %>%
+  bind_rows(map_df(1:4, ~ data.frame(
+    freq = freq,
+    componentNumber = .,
+    basis = "natural splines",
+    value = ns4Mat[, .]
+  ))) %>%
+  mutate(
+    componentNumber = as.character(componentNumber),
+    basis = fct_relevel(basis, rev)
+  )
+
+
+basisDf %>% ggplot(aes(x = freq, y = value)) +
+  geom_line(aes(color = componentNumber)) +
+  facet_wrap(~basis, scales = "free_y") +
+  xlab("WrittenFrequency") +
+  labs(color = "Component\nnumber")
+@
+
+
+The following models fit increasingly complex nonlinear effects of \ttt{WrittenFrequency}, with degrees of 1--5, for the \ttt{english\_young} case:
+
+<<>>=
+eng_mod_lin <- lm(RTlexdec ~ poly(WrittenFrequency, 1), 
+  data = english_young)
+eng_mod_poly2 <- update(eng_mod_lin, . ~ poly(WrittenFrequency, 2))
+eng_mod_poly3 <- update(eng_mod_lin, . ~ poly(WrittenFrequency, 3))
+eng_mod_poly4 <- update(eng_mod_lin, . ~ poly(WrittenFrequency, 4))
+eng_mod_poly5 <- update(eng_mod_lin, . ~ poly(WrittenFrequency, 5))
+@
+
+
+<<echo=FALSE>>=
+eng_mod_lin <- lm(RTlexdec ~ WrittenFrequency, data = english_young)
+eng_mod_ns2 <- update(eng_mod_lin, . ~ ns(WrittenFrequency, 2))
+eng_mod_ns3 <- update(eng_mod_lin, . ~ ns(WrittenFrequency, 3))
+eng_mod_ns4 <- update(eng_mod_lin, . ~ ns(WrittenFrequency, 4))
+eng_mod_ns5 <- update(eng_mod_lin, . ~ ns(WrittenFrequency, 5))
+eng_mod_ns6 <- update(eng_mod_lin, . ~ ns(WrittenFrequency, 6))
+eng_mod_ns7 <- update(eng_mod_lin, . ~ ns(WrittenFrequency, 7))
+@
+
+
+Figure~\ref{fig:nonlin-preds-1} (left) shows the predicted effect for each model. Over the values \ttt{WrittenFrequency} takes on in the dataset (between dashed lines), it looks like the quadratic, cubic, and quartic fits ($k=2, 3, 4$) fit the data progressively better, while the $k=5$ fit is similar to $k=4$.
+
+<<nonlin-preds-1, echo=FALSE, out.width='90%', fig.width=default_fig.width*.9/default_out.width, fig.asp=.34, fig.cap='Predicted reaction time for \\tsc{young} speakers as a function of frequency, in models of the \\ttt{english} data with different nonlinear terms for \\ttt{WrittenFrequency}: polynomial functions (left) and natural splines (right). $\\text{degree}=1$ shows a linear fit (least-squares).  Points are overlaid empirical data; dashed lines show 99\\% quantiles for \\ttt{WrittenFrequency}.'>>=
+alpha <- 0.01
+upper99 <- quantile(english_young$WrittenFrequency, 1 - alpha / 2)
+lower99 <- quantile(english_young$WrittenFrequency, alpha / 2)
+
+
+nd <- data.frame(WrittenFrequency = seq(-1, 13, length.out = 30), AgeSubject = "young")
+
+tempFun <- function(mod, deg, nd) {
+  data.frame(
+    pred = predict(mod, nd), degree = deg,
+    WrittenFrequency = nd$WrittenFrequency
+  )
+}
+
+p1<-bind_rows(
+  tempFun(eng_mod_lin, 1, nd),
+  tempFun(eng_mod_poly2, 2, nd),
+  tempFun(eng_mod_poly3, 3, nd),
+  tempFun(eng_mod_poly4, 4, nd),
+  tempFun(eng_mod_poly5, 5, nd)
+) %>%
+  mutate(degree = factor(degree)) %>%
+  ggplot(aes(x = WrittenFrequency, y = pred)) +
+  geom_point(aes(x = WrittenFrequency, y = RTlexdec), data = filter(english, AgeSubject == "young"), alpha = 0.3, size = 0.1) +
+  geom_line(aes(color = degree)) +
+  geom_vline(aes(xintercept = lower99), lty = 2) +
+  geom_vline(aes(xintercept = upper99), lty = 2) +
+  labs(x="Written frequency",
+       y="Predicted reaction\ntime (log msec)",
+       subtitle="Polynomials") +
+  scale_color_discrete(name = "degree (k)")
+
+p2<-bind_rows(
+  tempFun(eng_mod_lin, 1, nd),
+  tempFun(eng_mod_ns2, 2, nd),
+  tempFun(eng_mod_ns3, 3, nd),
+  tempFun(eng_mod_ns4, 4, nd),
+  tempFun(eng_mod_ns5, 5, nd)
+) %>%
+  mutate(degree = factor(degree)) %>%
+  ggplot(aes(x = WrittenFrequency, y = pred)) +
+  geom_point(aes(x = WrittenFrequency, y = RTlexdec), data = filter(english, AgeSubject == "young"), alpha = 0.3, size = 0.1) +
+  geom_line(aes(color = degree)) +
+  geom_vline(aes(xintercept = lower99), lty = 2) +
+  geom_vline(aes(xintercept = upper99), lty = 2) +
+  labs(x="Written frequency",
+       y="Predicted reaction\ntime (log msec)",
+       subtitle="Splines") +
+  scale_color_discrete(name = "degree (k)")
+
+p1 + p2 + plot_layout(guides = 'collect')
+
+## NOTE: did this with orthogonal polynomials, same predictions
+# bind_rows(tempFun(eng_mod_lin, 1, nd),
+#           tempFun(eng_mod_opoly2, 2, nd),
+#           tempFun(eng_mod_opoly3, 3, nd),
+#           tempFun(eng_mod_opoly4, 4, nd)
+# ) %>% mutate(degree=factor(degree)) %>%
+#   ggplot(aes(x=WrittenFrequency, y = pred)) +
+#   geom_line(aes(color=degree)) +
+#   geom_point(aes(x=WrittenFrequency, y=RTlexdec), data=filter(english, AgeSubject=='young'), alpha=0.3, size=0.1) +
+#   geom_vline(aes(xintercept=lower99), lty=2) +
+#   geom_vline(aes(xintercept=upper99), lty=2)
+@
+
+
+%\{Choosing model complexity}
+
+Deciding on $k$, including whether a nonlinear effect is justified at all, is a case of model comparison (Section~\ref{sec:lm-model-comparison}): we choose among candidate models using an appropriate metric, then sanity-check the result.
+
+\paragraph{Nested model comparison}
+
+Given how the orthogonal polynomials are constructed, the components for $k=3$ are a subset of those for $k=4$, and so on. (The same is true for raw polynomials.) Thus, models with different $k$ fitted to the same data are nested, so nested model comparison is appropriate for selecting among polynomial fits.
+For this example:
+<<>>=
+anova(eng_mod_lin, eng_mod_poly2, eng_mod_poly3, 
+  eng_mod_poly4, eng_mod_poly5)
+@
+
+The significant difference between the linear model and the $k=2$ model means that a nonlinear effect is justified. Increasing $k$ from 2 to 3 significantly improves the model (at $\alpha=0.05$), as does increasing from 3 to 4, but increasing from 4 to 5 does not.  So we would choose the nonlinear relationship with {$k=4$}.
+
+\paragraph{Non-nested model comparison}
+
+We can alternatively choose $k$ using a measure of model quality, such as AIC, BIC, or adjusted $R^2$:
+
+<<>>=
+## Function from performance package for comparing several models
+compare_performance(
+  eng_mod_lin, eng_mod_poly2, eng_mod_poly3,
+  eng_mod_poly4, eng_mod_poly5
+) %>%
+  select(Model, AIC, BIC, R2_adjusted)
+@
+
+Using any of these metrics we would choose $k=4$.
+%or adjusted $R^2$ we would choose {$k=4$}, while using BIC we would choose {$k=3$}.  (Recall that BIC typically selects simpler models.)
+
+\paragraph{Visual inspection}
+
+Whichever model selection method is used, the value of $k$ should be sanity-checked by examining a nonlinear smoother of the relationship between $x$ and $y$, to eyeball whether the curve deviates from a line at all (in which case $k>1$), and if so the number of inflection points (zero inflection points suggests $k=2$, one inflection point suggests $k=3$, and so on).  For example, for the \ttt{english\_young} plot (Figure~\ref{fig:slr-ex-2} right) it looks like there are 1--2 inflection points, so we'd choose $k=3$ or 4.
+%---the two values reached by different model selection methods.
+
+Visual inspection can also be used by itself, especially when it's not practical to do model selection, for example when screening many predictors for nonlinear effects.
+
+% 
+% These functions are constructed recursively (in R) \textbf{for this dataset}: function 2 is chosen to be orthogonal to function 1, function 3 to be orthogonal to functions 1--2, and so on.  As such, 
+% 
+
+% FUTURE: box somewhere on poly and spline specific to dataset used, so often to work with fitted models end up needing to extract raw components.
+
+
+
+% Example: 
+% 
+% <<echo=FALSE>>=
+% eng_mod_lin <- lm(RTlexdec ~ WrittenFrequency, data=english_young)
+% eng_mod_poly2 <- update(eng_mod_lin, . ~ . + I(WrittenFrequency^2))
+% eng_mod_poly3 <- update(eng_mod_poly2, . ~ . + I(WrittenFrequency^3))
+% eng_mod_poly4 <- update(eng_mod_poly3, . ~ . + I(WrittenFrequency^4))
+% eng_mod_poly5 <- update(eng_mod_poly4, . ~ . + I(WrittenFrequency^5))
+% @
+
+% 
+% # eng_mod_opoly2 <- lm(RTlexdec ~ poly(WrittenFrequency,2) + AgeSubject, data=english)
+% # eng_mod_opoly3 <- lm(RTlexdec ~ poly(WrittenFrequency,3) + AgeSubject, data=english)
+% # eng_mod_opoly4 <- lm(RTlexdec ~ poly(WrittenFrequency,4) + AgeSubject, data=english)
+% # eng_mod_opoly5 <- lm(RTlexdec ~ poly(WrittenFrequency,5) + AgeSubject, data=english)
+%
+% - Look at predictions: Figure~\ref{fig:nonlin-preds-1} left
+
+
+
+\subsection{Splines}
+
+Intuitively, a spline is a curve made up of several polynomials glued together, which aims to (a) approximate the underlying relationship between $x$ and $y$ well; and (b) be smooth, especially at the places where the polynomial pieces connect (the \emph{knots}). You have probably encountered splines when drawing a `curve' or `path' in a computer program (e.g., PowerPoint, Photoshop) by specifying the endpoints of the curve and several points it must go through.There are many kinds of splines; the R default of \emph{natural (cubic) splines} is a common choice---cubic splines (the polynomials are cubics), constrained to (c) grow only linearly outside of the endpoints (`natural').
+
+Splines have important advantages over polynomials (Box~\ref{box:splines-more}).  They are less prone to overfitting and approximate the underlying function better, especially at very high and low values of the variable being modeled (example below).
+%Put otherwise, splines are less prone to overfitting.
+
+
+\begin{boxedtext}{Broader context: More on splines}
+\label{box:splines-more}
+
+Splines are less widely-used than polynomials in language and behavioral sciences, but have important advantages for modeling nonlinearities common in linguistic data.  Splines lie between a nonlinear smoother and polynomials, with the advantages of both.  Like a nonlinear smoother, the fit is \textbf{local} and \textbf{smooth}: each section of the curve fits nearby points better, and is not influenced by far-away points; smoothness conditions at the knots (typically equal first derivatives, zero second derivatives) mean the curve never changes too quickly, unless justified by the data. In a polynomial fit certain points (especially near the endpoints) are overly influential, and nothing forces the curve to be smooth---overfitted polynomials tend to look unreasonably wiggly (due to \emph{Runge's phenomenon}; the internet has many good illustrations).   Like a polynomial, splines are \textbf{parametric}, so they can be estimated in a regression model, and extrapolated beyond observed values of $x$---but they are less liable to `blowing up' when extrapolated than polynomials.  These issues are exacerbated for smaller sample sizes and when observations are unevenly distributed among values of $x$, both very common for linguistic data.
+% FUTURE: could include examples of polynomials fitted to english\_40 in plot of polynomial components above, to illustrate. 
+
+Fit quality near endpoints is an important issue in practice because these are often the most relevant data to the research questions.  This is especially true for observational data, for example the \ttt{vot\_michael} example where the highest speaking-rates are of interest, but also for controlled data, such as the lowest-frequency words in the \ttt{english\_young} example.
+
+There are many ways of defining splines, depending on the polynomials used, how knots are chosen, etc., leading to a variety of names you may see.  R's \ttt{ns()} function (`natural splines') is the most basic and widely-supported version (cubic polynomials, evenly-spaced knots, linear outside of endpoints).  `Restricted cubic splines' (\ttt{rcs()}, from the {rms} package: \citealp[][\S2.4]{harrell2015regression}) are widely used in linguistics, following \citet{baayen2008analyzing}. They have the useful property that the first component is a line, so results can be reported as `linear' and `nonlinear' terms.   We use \ttt{ns()} as our default because it is most compatible with other packages (for model predictions, etc.).  `Smoothing splines' are a more complex, non-parametric method, such as in the \ttt{gam()} function used by \ttt{geom\_smooth()}.
+
+
+%`Smoothing splines' are also increasingly used (especially in phonetics and psycholinguistics)---these are a more complex, non-parametric method, such as in the \ttt{gam} function used by \ttt{geom\_smooth}.
+
+%FUTURE: any take-home? what's important is not the details, but using splines at all, understanding their broad advantages, and the issues with polynomials.
+
+\end{boxedtext}
+
+%% FUTURE: from Micheala -- from here to "To select the degree..." can compress by 50%, examples don't feel crucial.  (OTOH, JPK liked the last paragraph)
+The downside of splines is that they are less intuitive than polynomials.  Instead of $x$, $x^2$, etc. (or orthogonalized versions) the $k$ spline components are cubic functions chosen \textbf{for this dataset} to satisfy conditions (b)--(c) given the distribution of $x$.
+%\footnote{The knots are at equally-spaced quantiles of the data by default.}  
+It is not typically necessary or useful to examine spline components because they are not easily interpretable.   Figure~\ref{fig:basis-function-ex} (right) shows the components for \ttt{WrittenFrequency} when $k=4$. Each component is a cubic function, which is linear at its endpoints, but higher-order components are more `bendy' (more inflection points).
+%\footnote{Note that none of the components is a line, so it is not possible to separate the coefficients for a natural spline as `linear' and `nonlinear' terms, as for a polynomial fit or `restricted cubic splines' widely-used in linguistics (Box~\ref{box:splines-more}).}
+
+$k$ is the degree of the spline (a.k.a.\ `degrees of freedom'), one greater than the number of knots; intuitively, this is the degree of the polynomial that would be needed to fit the same curve.  So a spline with $k=2$ typically looks quadratic/has no inflection point, $k=3$ has one inflection point, and so on.  
+
+
+A natural spline term is included in a model using \ttt{ns()} (from the {splines} package).  For example, this model uses a $k=4$ spline for the \ttt{english\_young} data.
+<<>>=
+eng_mod_ns4 <- update(eng_mod_lin, . ~ ns(WrittenFrequency, 4))
+@
+
+
+Figure~\ref{fig:nonlin-preds-1} (right) shows nonlinear effects fitted for this data, using natural splines with $k=$2--5.  Similarly to polynomials, visual inspection suggests $k$ of at least 3 is justified (1+ inflection points).  Note the difference in behavior between the spline and polynomial fits, which illustrate how polynomials tend to `blow up' when extrapolated beyond the range of $x$ in the data used to fit the curve. All polynomial and spline fits in Figure~\ref{fig:nonlin-preds-1} look good for $x$ between about 1 and 10, where 99\% of the data lies, but the polynomial curves with $k=3, 4, 5$ wildly diverge for $x$ extrapolated just outside of this range.
+%Consider the polynomial fits to the \ttt{english\_young} data in Figure~\ref{fig:nonlin-preds-1} (left).  All the curves fit well for $x$ between about 1 and 10, where 99\% of the data lies, but the curves with $k=3, 4, 5$ wildly diverge for $x$ extrapolated just outside of this range. 
+In contrast, splines fitted to this data look reasonable when extrapolated outside of 1--10 , because they are constrained to grow linearly.  
+
+In particular, note how the `good' fits of equivalent complexity (with $k \ge 4$) differ for words with frequency 0---these are real words, which were observed only once in the corpus (hence log-frequency of 0).  In other words, their real frequencies are not 0 (if frequencies came from a larger corpus), and there are many other English words with frequencies in this range (most words of a language are low-frequency), so it is scientifically important what the predicted relationship is on the left edge of the graph.  The spline fits predict a flat relationship: reaction time will be similar to observed zero-frequency words, which seems plausible.  The polynomial fits are all problematic: $k=3$ predicts a flat relationship, but with \texttt{RTlexdec} different from observed zero-frequency words; $k>3$ predicts a sharply decreasing relationship, which is scientifically implausible.  Avoiding such extrapolation errors is a major motivation for using splines (Box~\ref{box:splines-more}).
+
+%% FUTURE: could put the last 1-2 paragraphs mostly in the `more on splines' box, as the concrete example?
+
+
+\paragraph{Choosing model complexity}
+
+To select the degree for a spline term, only non-nested model comparison should be used.  This is because (natural) spline components are a function of the dataset \textbf{and} $k$---the components for $k=3$ are not a subset of those for $k=4$, so models fitted with spline terms of different degree $k$ are not in a subset-superset relation.
+%\footnote{It is possible to define splines such that models with different $k$ are nested, such as recursive cubic splines , but this isn't a general property.}
+
+Models with different $k$ can be compared using AIC, BIC, etc., exactly as for polynomial fits above, and it is good practice to sanity check with visual inspection. Exercise~\ref{ex:english-young-nonlinear} asks you to fit and compare these models for the  \ttt{english\_young} case, showing that BIC, AIC, and adjusted $R^2$, select $k$ of 4, 5, and 6.  Visual inspection suggests that {$k=4$} is a good choice.
+
+% 
+% <<>>=
+% compare_performance(eng_mod_lin, eng_mod_ns2, eng_mod_ns3, 
+%                     eng_mod_ns4, eng_mod_ns5) %>% 
+%   select(Model, AIC, BIC, R2_adjusted)
+% @
+% 
+
+
+% NOTE: if you use rcs instead for this example, get weird predictions. Another reason rcs isn't a good default
+% <<>>=
+% eng_mod_lin <- lm(RTlexdec ~ WrittenFrequency, data=english_young)
+% eng_mod_rcs3 <- update(eng_mod_lin, . ~ rcs(WrittenFrequency, 3))
+% eng_mod_rcs4 <- update(eng_mod_lin, . ~ rcs(WrittenFrequency, 4))
+% eng_mod_rcs5 <- update(eng_mod_lin, . ~ rcs(WrittenFrequency, 5))
+% eng_mod_rcs6 <- update(eng_mod_lin, . ~ rcs(WrittenFrequency, 6))
+% 
+% bind_rows(tempFun(eng_mod_lin, 1, nd),
+%           tempFun(eng_mod_rcs3, 2, nd),
+%           tempFun(eng_mod_rcs4, 3, nd),
+%           tempFun(eng_mod_, 4, nd),
+%           tempFun(eng_mod_ns5, 5, nd)
+% ) %>% mutate(degree=factor(degree)) %>%
+%   ggplot(aes(x=WrittenFrequency, y = pred)) +
+%   geom_line(aes(color=degree)) +
+%   geom_point(aes(x=WrittenFrequency, y=RTlexdec), data=filter(english, AgeSubject=='young'), alpha=0.3, size=0.1) +
+%   geom_vline(aes(xintercept=lower99), lty=2) +
+%   geom_vline(aes(xintercept=upper99), lty=2) + 
+%   ylab('Predicted RTlexdec') +
+%   ggtitle('Splines') +
+%   scale_color_discrete(name='knots')
+% @
+% 
+
+\subsection{Interpretation and reporting}
+\label{sec:nonlin-interp-reporting}
+
+Consider the fitted models selected (using BIC) to describe the nonlinear relationship between \ttt{WrittenFrequency} and \ttt{RTlexdec}, using (orthogonal) polynomials and splines:
+
+<<>>=
+tidy(eng_mod_poly3)
+tidy(eng_mod_ns4)
+@
+
+The intercept in each case is interpretable as the mean of \ttt{RTlexdec} (\Sexpr{mean(english_young$RTlexdec)}), because both natural splines and orthogonal polynomials are `centered'.  For all models we've fitted previously, without nonlinear effects,  the regression coefficients have been interpretable---as the slope of $x$, or a difference between levels.  What do the the $k$ coefficients describing each nonlinear effect mean?
+
+The short answer is that these coefficients are hard to interpret, and it is usually fine to ignore them, instead interpreting the nonlinear effect by plotting model predictions (as in Figure~\ref{fig:nonlin-preds-1}) and carrying out  omnibus tests (to decide if the nonlinear effect is `significant').
+%\footnote{Technically, the coefficients multiplied by the components 
+%give the fitted nonlinear effect, but given that the components are themselves hard to interpret and dataset-specific, the coefficient values are opaque.}
+
+For example, to compute an omnibus effect and associated effect size for the nonlinear effect of \ttt{WrittenFrequency} in model \ttt{eng\_mod\_ns4}:
+%(output not shown):
+
+<<>>=
+# Intercept-only model
+eng_mod_baseline <- update(eng_mod_ns4, . ~ 1)
+anova(eng_mod_baseline, eng_mod_ns4)
+cohens_f2(eng_mod_baseline, eng_mod_ns4)
+@
+
+The effect could be reported in a paper as follows:
+\begin{quote}
+There was a nonlinear effect of frequency on reaction time, pictured in Figure~\ref{fig:slr-ex-2} (right), modeled using a natural spline of degree 4 (Cohen's $f$= 0.84; \Sexpr{fTestReport(eng_mod_baseline, eng_mod_ns4)}), with the spline's degree chosen using BIC and confirmed with visual inspection.
+\end{quote}
+
+If you also want to report that a \textbf{nonlinear} effect in particular was justified, you could add a sentence:\footnote{The linear and nonlinear models are not nested in this case, so we can't easily assess the significance of the difference.}
+\begin{quote}
+A nonlinear relationship is clear from the empirical data (Figure~\ref{fig:slr-ex-2}: right), and the nonlinear model improves on a linear effect of frequency (BIC= \Sexpr{BIC(eng_mod_baseline)}, \Sexpr{BIC(eng_mod_ns4)} for linear, nonlinear models).
+\end{quote}
+
+
+
+
+\subsection{Examples}
+
+Let's consider two more realistic examples showing how nonlinear effects come up in multiple regression models.
+
+\subsubsection{Interactions with nonlinear effects}
+
+Consider our working model for the \ttt{vot\_michael} data, \ttt{gh\_mod\_4}.  Recall that an interaction between \ttt{speaking\_rate} and \ttt{voicing} was included in the model, based on the empirical plot in Figure~\ref{fig:rate-voicing-resids} (bottom), to allow for the different speaking rate effect for \tsc{voiced} and \tsc{voiceless} stops. The model captures the main pattern, that there is a weaker effect for voiced stops. But the same plot suggests the speaking rate effect may be nonlinear.
+
+To assess this, we compare the model with a linear  \ttt{speaking\_rate} effect (and its interaction with \ttt{voicing}) to models where this effect is parametrized as a natural spline with degree $k=$ 2 or 3. (From visual inspection, $k=3$ looks like the maximum justified degree.)
+
+<<>>=
+## Fit nonlinear models
+vot_mod_ns2 <- update(gh_mod_4, . ~ . - voicing * speaking_rate +
+  ns(speaking_rate, 2) * voicing)
+vot_mod_ns3 <- update(gh_mod_4, . ~ . - voicing * speaking_rate +
+  ns(speaking_rate, 3) * voicing)
+
+## Compare linear and nonlinear models
+compare_performance(gh_mod_4, vot_mod_ns2, vot_mod_ns3) %>%
+  select(Model, AIC, BIC, R2_adjusted)
+@
+
+AIC selects the nonlinear model with degree 2, while BIC selects the linear model.  Figure~\ref{fig:vot-ixn-mod-pred} shows the predicted speaking rate-voicing interaction for these two models.  Both models capture the main empirical pattern, that the \ttt{voicing} effect is smaller in faster speech. In the linear model this is the pattern across all speech rates, while in the nonlinear model it is only for fast speech that the \ttt{voicing} effect decreases, due to the direction of the rate effect reversing for \tsc{voiced} stops.  Both models seem reasonable given the empirical data, but the nonlinear model is odd on theoretical grounds: it would be surprising for any phonetic duration to be \textbf{longer} in faster speech.  This suggests selecting the more conservative (linear) model.
+
+
+<<vot-ixn-mod-pred, echo=FALSE, out.width='90%', fig.width=default_fig.width*.9/default_out.width, fig.asp=.34, fig.cap='Interaction plots of \\ttt{speaking\\_rate} and \\ttt{voicing} for models of the \\ttt{vot\\_michael} data with linear (left) and nonlinear (right) \\ttt{speaking\\_rate} effects, with empirical data overplotted.'>>=
+p1<-ggeffect(gh_mod_4, terms = c("speaking_rate", "voicing")) %>% 
+  plot(use.theme=FALSE, show.title=F, colors = "bw") + 
+  geom_point(
+    data = vot_michael %>% mutate(
+      x = speaking_rate, 
+      predicted = log_vot, 
+      group = voicing, 
+      group_col = voicing
+      ), size = 0.5, alpha = 0.5) + 
+  scale_linetype_discrete() +
+  labs(x="Speaking rate",
+       y="Predicted VOT (log)",
+       subtitle="Linear effect")
+
+p2<-ggeffect(vot_mod_ns2, terms = c("speaking_rate", "voicing")) %>% 
+  plot(use.theme=FALSE, colors = 'bw', show.title=F) + 
+  geom_point(data = vot_michael %>% mutate(
+    x = speaking_rate, 
+    predicted = log_vot, 
+    group = voicing, 
+    group_col = voicing
+    ), size = 0.5, alpha = 0.5) + scale_linetype_discrete() +
+  labs(x="Speaking rate",
+       y="Predicted VOT (log)", 
+       subtitle="Nonlinear effect")
+
+p1+p2+plot_layout(guides='collect')
+@
+
+\subsubsection{Nonlinear effects in logistic regression}
+
+Our examples so far have used linear regression, and while a nonlinear relationship was justified, the main qualitative conclusion about the $x$-$y$ relationship was similar whether a linear or nonlinear effect was fitted. This example uses logistic regression in a case where nonlinearity matters for the research question.
+
+We model verb regularity (\ttt{Regularity}) for the \ttt{regularity} dataset, as a function of predictors considered so far (\ttt{WrittenFrequency}, \ttt{Auxiliary}, \ttt{Ncountstem}: Section~\ref{sec:nnd-regularity-data}, \ref{sec:ncountstem-example}), as well as an additional predictor: morphological family size (\ttt{FamilySize}: number of types in the word's morphological family).  This is a simplified version of the model from \citet[][\S6.3.1]{baayen2008analyzing}.  
+
+Of interest here is the \ttt{FamilySize} effect,
+for which Figure~\ref{fig:reg-fam-size} shows linear and nonlinear smooths to the empirical data.
+%(Box~\ref{box:empirical-logistic-smooths}). 
+The linear and nonlinear smooths in Figure~\ref{fig:reg-fam-size} (left) both model the log-odds that $y=1$. The linear smooth is predictions from a simple logistic regression of $x$=\ttt{Regularity} (as discussed in Box~\ref{box:empirical-binomial}); the nonlinear smooth is predictions from a GAM with a smoothing spline term for $x$. 
+ 
+One can imagine either a positive or negative family size effect,
+%analogously to the frequency effects for the \ttt{diatones} data, 
+which could correspond to different hypotheses of how the mental lexicon influences language change.\footnote{Words with larger morphological families may be processed more by analogy to the rest of the lexicon (promoting regularity), or may have their representation strengthened (promoting irregularity).}
+% FUTURE: not sure that's right but also not worth the effect. I checked both Baayen/Moscoso and Tabak papers referenced in baayen 2007; neither is helpful on family size. 
+The empirical data suggests a nonlinear effect is justified, which we can verify by fitting linear and nonlinear models (with splines, $k=2, 3$) as above:
+
+
+<<>>=
+reg_mod_lin <- glm(Regularity ~ WrittenFrequency + FamilySize +
+  NcountStem + Auxiliary, data = regularity, family = "binomial")
+reg_mod_nonlin2 <- update(reg_mod_lin, . ~ .
+- FamilySize + ns(FamilySize, 2))
+reg_mod_nonlin3 <- update(reg_mod_lin, . ~ .
+- FamilySize + ns(FamilySize, 3))
+compare_performance(reg_mod_lin, reg_mod_nonlin2, reg_mod_nonlin3) %>%
+  select(Model, AIC, BIC)
+@
+
+
+
+% Consider the \ttt{regularity} dataset from XX.  So far we have considered as predictors of whether a verb is regular (\ttt{Regularity}) various predictors (\ttt{WrittenFrequency}), \ttt{Auxiliary}, \ttt{NcountStem}), as well  described in XX.
+% %the expected direction of these effects is positive, \tsc{zijn}$<$\tsc{zijnheb}$<$\tsc{hebben}, and \tsc{irregular}$<$\tsc{regular} (REFS to figures). 
+% We now consider an additional predictor, \underline{morphological} family size (\ttt{FamilySize}: number of types in the word's morphological family), and model the effects of all predictors on \ttt{Regularity}.
+
+
+
+
+<<reg-fam-size, echo=FALSE, out.width='45%', fig.width=default_fig.width*.45/default_out.width, fig.cap='Left: empirical plot of probability of verb \\ttt{Regularity} as a function of \\ttt{FamilySize}, using linear (dotted line) and nonlinear  (GAM: solid line, with 95\\% CIs) smoothers, for the \\ttt{regularity} data.  Right: partial effect of \\ttt{FamilySize} from model \\ttt{reg\\_mod\\_nonlin2}.'>>=
+ggplot(aes(x = FamilySize, y = as.numeric(Regularity) - 1), data = regularity) +
+  geom_jitter(height = 0.01, width = 0.02, size = 0.5) +
+  ylab("Proportion regular verbs") +
+  geom_smooth(color=default_line_color, method = "glm", method.args = list(family = "binomial"), se = F, lty = 2, size = 0.5) +
+  geom_smooth(color=default_line_color, method = "gam", method.args = list(family = "binomial"), size = 0.5) +
+  ggtitle("Empirical data") +
+  ylab("Predicted P(regularity)") +
+  coord_cartesian(ylim = c(0, 1))
+reg_mod_nonlin2 %>%
+  ggeffect("FamilySize [n=10]") %>%
+  plot(use.theme=F) + 
+  scale_color_continuous() + 
+  ylim(0, 1) + 
+  ggtitle("Natural spline (k=2)")
+@
+
+% - Models with different degrees of nonlinearity on FamilySize effect:
+
+% Figure~\ref{fig:reg-fam-size} shows the empirical effect of \ttt{FamilySize}, using a nonlinear smoother, as well as the linear trend (in log-odds).  It looks like a nonlinear effect is justified, which we can verify by fitting linear and nonlinear models (with splines, $k=2, 3$) as above:
+
+Both AIC and BIC select the nonlinear model with $k=2$.  The predicted effect of \ttt{FamilySize} for this model is shown in Figure~\ref{fig:reg-fam-size} (right).
+%as well as the linear model, are shown in Figure~\ref{fig:reg-nonlin-mod-pred}.
+
+% BOX FOR THIS is now at beginning of Chap. 6.
+% \begin{boxedtext}{Practical note: Empirical plots of binomial data}
+% \label{box:empirical-logistic-smooths}
+% 
+% In introducing logistic regression we saw several reasons why it is better for binomial data to model the probability (as log-odds) that $y=1$, rather than $y$ itself. By the same logic, when plotting empirical relationships for binomial data it is important to use visualizations that calculate probabilities rather than treating $y$ as 0 and 1.  
+% 
+% The easiest way to do this is to use smoothers based on logistic regression. The linear and nonlinear smooths in Figure~\ref{fig:reg-fam-size} (left) both model the log-odds that $y=1$. The linear smooth is predictions from a simple logistic regression of $x$=\ttt{Regularity}; the nonlinear smooth is predictions from a GAM with a smoothing spline term for $x$. 
+% 
+% The relevant \ttt{ggplot} commands are:
+% 
+% <<eval=FALSE>>=
+% ggplot(aes(x = FamilySize, y = as.numeric(Regularity) - 1), data = regularity) +
+%   geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+%   geom_smooth(method = "gam", method.args = list(family = "binomial"))
+% @
+% 
+% Without the \ttt{method.args} flag (try it!), the smoothers will treat $y$ as a numeric variable which happens to have values 0 and 1, leading to predicted probabilities which don't make sense (in this case, larger than 1).
+% 
+% This seems very technical, but it comes up a lot in practice and raises a more general point: empirical plots should summarize data in a way that matches the statistical models to be used, as much as possible.
+% 
+% \end{boxedtext}
+
+% 
+% <<reg-nonlin-mod-pred, out.width='45%', fig.width=default_fig.width*.45/default_out.width,  fig.cap='XXX'>>=
+% reg_mod_lin %>% ggeffect('FamilySize [n=10]') %>% plot() + ylim(0.5,1) + ggtitle('Linear model')
+% reg_mod_nonlin2 %>% ggeffect('FamilySize [n=10]') %>% plot() + ylim(0.5,1) + ggtitle('Nonlinear model')
+% @
+
+
+Note also that in the linear model \ttt{FamilySize} does not significantly contribute to the model while in the nonlinear model it does (by likelihood-ratio tests):
+<<output.lines=5:7>>=
+reg_mod_none <- update(reg_mod_lin, . ~ . - FamilySize)
+anova(reg_mod_none, reg_mod_lin, test = "Chisq")
+@
+<<output.lines=6:8>>=
+anova(reg_mod_none, reg_mod_nonlin2, test = "Chisq")
+@
+
+Thus, the linear and nonlinear models give qualitatively different results  for an effect of interest.   From the linear model 
+%only captures a very weak `inhibition' effect; 
+we would conclude that morphological family size is not predictive of verb regularity, while in the nonlinear model we would conclude there is an interesting `U-shaped' effect of family size.
+
+This illustrates one motivation for considering nonlinear effects: the qualitative conclusions about the predictor of interest may change.\footnote{Another possibility is that the effects of \textbf{other} predictors change once a nonlinear effect is accounted for.  However, in this and the VOT example above, it can be verified from the model tables that the effects of other predictors are very similar in the linear and nonlinear models.}
+
+% 
+% - So, the linear and nonlinear models give qualitatively different results for an effect of interest: linear model barely captures the ``inhibition'' effect (p=0.07); nonlinear model captures both this and etc.
+% 
+% - In nonlinear model WrittenFrequency is most important, followed by other three equally.  In linear model FamilySize effect is n.s.  So the *qualitative* conclusions change.
+
+
+\section{Collinearity diagnostics revisited}
+\label{sec:collin-diagnostics-2}
+
+%% FUTURE: improve this section a bit. For now just need to get this in to refer to in next chapter
+
+In Section~\ref{sec:collinearity-diagnostics} we introduced the VIF measure, which quantifies how much the variance of each predictor's estimate is `inflated' by the presence of others.  This does not make sense when a subset of the predictors are related, as for multi-level factors or non-linear effects, where a single variable corresponds to several predictors.  Another way of stating this distinction is that these measures assume each variable has $df=1$; multi-level factors or non-linear effects have $df>1$ (e.g., $df$ = number of contrasts).  Intuitively we would like a measure of how predictable each set of related predictors is from the others, e.g.,\ how predictable \ttt{place} ($df=2$) is from other predictors for the \ttt{vot\_michael} data.
+
+The \emph{generalized variance inflation factor} (GVIF) is a generalization of VIF to this case \citep[][\S8.8]{fox2019r}, which is automatically computed by \ttt{vif} in the \ttt{car} package when applied to a model where some terms have $df>1$.\footnote{GVIF is the degree of inflation of the joint confidence region of the $df$ regression coefficients in the presence of the other $k-df$ predictors.}  $GVIF^{1/2 \cdot df}$  turns out to quantify how much the standard error of the variable's effect is inflated due to collinearity;  following  \citet{misty}, we call this the \emph{SIF} (Standard error Inflation Factor). The SIF is a generalization of $\sqrt{VIF}$ (when $df=1$, $\sqrt{VIF} = SIF$). 
+
+For example, consider SIF values for the model of the \ttt{vot\_michael} data with a nonlinear \ttt{speaking\_rate} effect chosen by AIC (rightmost column):
+
+<<>>=
+car::vif(vot_mod_ns2)
+@
+
+In this model the multi-level factor \ttt{place} and the nonlinear effect of \ttt{speaking\_rate}, each with $df=2$, receive a single SIF value. The estimates of the \ttt{voicing} and \ttt{voicing:speaking\_rate} effects are more strongly affected by collinearity than other predictors. 
+
+If we used a cutoff of SIF=3.2 (analagous to VIF = 10: $\sqrt{10} = 3.2$), we would conclude that there is potentially problematic collinearity in this model (maximum $SIF > 3.2$), in particular for estimating the \ttt{voicing:speaking\_rate} effect of key theoretical interest.  This would be relevant to report in a write-up when discussing the \ttt{voicing:speaking\_rate} effect: although model selection  suggests a linear (if using BIC) or slightly nonlinear (if using AIC) effect, the degree of collinearity suggests we should not put much confidence in the exact degree chosen. (In contrast, there is clear evidence for \textbf{some} \ttt{voicing:speaking\_rate} interaction.)
+
+Note that the other measure of collinearity we discussed in Section~\ref{sec:collinearity-diagnostics}, condition number ($\kappa$), generalizes to the $df>1$ case because it applies to the \textbf{set} of predictors rather than to individual predictors. 
+% 
+% \begin{boxedtext}{Practical note: What about condition number?}
+% 
+% It seems to me that the definition of the condition number $\kappa$ has the same issues as VIF in the case where some variables have $df>1$, but I have not come across discussion of this issue.  Thus I am not sure whether it is appropriate to use $\kappa$ to diagnose collinearity in this case, though this is common in published work. For this reason, 
+% %because GVIF also extends to mixed-effects models \citep[][\S8.8]{fox2019r}, and
+% %because VIF-type measures are more commonly used,
+% SIF seems like a better default than $\kappa$ to quantify collinearity. 
+% 
+% \end{boxedtext}
+
+
+
+
+
+
+\section{Other readings}
+\label{sec:other-reading-ch7}
+
+%There are few good readings about contrast coding in R focused on regression, outside of online treatments.  
+\citet{schad2020capitalize} discusses contrast coding in R, focusing on regression and linguistic data. More detailed treatments 
+%a notable exception, focused on linguistic data, with references to more detailed treatments
+focus on the ANOVA case (e.g.,\ \citealp[][chap. 8]{cohen2002applied}; \citealp[][chap. 15]{baguley2012serious}) or R's implementation of contrast coding \citep[e.g.,][\S6.2]{venables2002modern}.  \citet{ucla-contrasts} is an useful online tutorial.
+
+On marginal means and  post-hoc tests (and their use for interpreting interactions) the {emmeans} and {margins} vignettes  are helpful \citep{emmeans,margins}. The marginaleffects package, which combines and extends emmeans/margins functionality, is worth checking out \citep{marginaleffects}.
+% FUTURE: more??
+Basic introductions to interpreting interactions are in most regression analysis books, including \citet[][chap. 8]{winter2019statistics}, \citet[][\S5.2]{gries2021statistics} for linguistic data in particular.   
+
+On nonlinear effects, \citet{baayen2008analyzing} goes into particular depth for linguistic data, using the tools from \citet[][]{harrell2015regression} (e.g.,\ \S2.4).
+%which is an excellent but dense read.  
+More general introductions to the topics discussed (smoothers, polynomials, splines, etc.) from increasingly technical perspectives, include \citet[][\S7.4]{zuur2007analyzing}; \citet[][chap. 4]{wood2017generalized}; \citet{hastie2009elements}.
+
+\citet[][]{cohen2002applied} is a useful in-depth treatment of most of these topics for behavioral sciences generally, which exemplifies the vast methodological literature on these topics from related fields, to which we can't do justice.
+%but which is a goldmine for future linguistic data analysis. 
+For example, \citet{mize2019best} (sociology) and \citet{preacher2006computational} (behavioral sciences) discuss methods for interpreting interactions.
+% Some items on my reading list are \citet{mize2019best}, REF.
+%% FUTURE? : there is so much, from sociology/poli-sci, psychology... but this isn't the place  Ex: Preacher et al 2006 on interpreting interactions ``Computational tools for probing interactions in multiple linear regression, multilevel modeling, and latent curve analysis'' 
+% - also, there is a lot on interpreting marginal means and post-hoc tests, but haven't really read it (margins package has some references?), and it's not 
+
+\section{Exercises}
+
+\exer{\label{ex:simple-se} Consider the intercept terms in the VOT models where \ttt{lexical\_class} is coded using treatment contrasts (\ttt{vot\_cc\_mod\_1}) and simple contrasts (Section~\ref{sec:contrast-interp}), which have different estimates corresponding to their different interpretations. Why is the intercept's \textbf{standard error} higher in \ttt{vot\_cc\_mod\_1}?}
+
+\exer{\label{ex:sum-interp} Starting from the contrast matrix for sum contrasts with 4 levels (\ttt{contr.sum(4)}), calculate the corresponding `interpretation matrix', and verify that the intercept's interpretation is the (unweighted) grand mean and the interpretation of contrast $i$ is ``level $i$ minus the grand mean''.}
+
+% An aside: as above, the interpretations of the intercept and contrasts are not obvious from the contrast matrix, but we can get these interpretations by taking the generalized inverse:
+% 
+% <<>>=
+% ginv(contr.sum(3))
+% @
+% 
+% where we see:
+% 
+% \begin{itemize}
+% \item
+%   Row 1: intercept
+% 
+%   \begin{itemize}
+%   \tightlist
+%   \item
+%     1/3 \(\cdot\) each level = \textbf{grand mean}
+%   \end{itemize}
+% \item
+%   Row 2: \((2/3, -1/3, -1/3) = (1, 0, 0) - (1/3, 1/3, 1/3)\)
+% 
+%   \begin{itemize}
+%   \tightlist
+%   \item
+%     Difference between \emph{level 1} and grand mean
+%   \end{itemize}
+% \item
+%   Row 3: \((-1/3,2/3,1/3) = (0, 1, 0) - (1/3, 1/3, 1/3)\)
+% 
+%   \begin{itemize}
+%   \tightlist
+%   \item
+%     Difference between \emph{level 2} and grand mean
+%   \end{itemize}
+% \end{itemize}
+
+
+
+\exer{\label{ex:diatones-alt-analysis} 
+In Section~\ref{sec:omnibus-vs-contrasts}, we showed how the `first step' of building up a model for the \ttt{diatones} data, a model including all main effects, can lead to two different conclusions about the effect of \ttt{syll2\_coda\_fact} depending on the analysis method used.}
+
+\subexer{Build up the model via the Gelman \& Hill method for this case, as in Section~\ref{sec:diatones-mod-2}, assuming that \ttt{syll2\_coda\_fact} does have a significant main effect.}
+
+\subexer{Now do the same, assuming that \ttt{syll2\_coda\_fact} does not have a significant main effect.}
+
+\subexer{What is the qualitative difference between the two resulting `final' models?  Does this difference affect what the model says about the research questions?}
+
+\exer{\label{ex:vot-three-way} Verify, using the Gelman \& Hill method applied to \ttt{gh\_mod\_4}, that the \ttt{cons\_cluster:place:voicing} term added in Section~\ref{sec:three-way-example} is the only three-way interaction justified.  (You can assume that there is no theoretical motivation for any three-way interaction.)}
+
+
+\exer{\label{ex:english-young-nonlinear} Fit  models for the \ttt{english\_young} case with natural splines, with degrees of $k=$ 1--7.  Show that BIC, AIC, and adjusted $R^2$, select $k$ of 4, 5, and 6. Which $k$ does visual inspection suggest is reasonable?}
+
+
+
+% in this exerise: if you follow a strict GH method for building up the model here -- would end up not including syll2_coda_fact at all, then not including syll2_td:frequency -- just syll1_coda:frequency. you end up at a model where only frequency, freq:syll1_coda signif. that's quite a different qualitative conclusion about the effect of frequency and structure.
+% }
+
+
+
+% The standard error of the intercept is much lower than in the original model because now every observation contributes to its estimate, rather than just the \tsc{labial} observations.
+
+
+
+
+% 
+% <<boxplot-ex, echo=FALSE,  fig.cap="Boxplots summarizing distribution of \\ttt{RTlexdec} for each value of \\ttt{AgeSubject}, for the \\ttt{english} data, with superimposed means (blue dots).">>=
+% english %>% ggplot(aes(AgeSubject, RTlexdec)) +
+%   geom_boxplot() +
+%   stat_summary(fun.y="mean", geom="point", color="blue", size=3) +
+%   xlab("Subject age") + ylab("Reaction time")
+% @
+% \begin{boxedtext}{Practical note: Visualizing ...}
+% % \hypertarget{bonus-linear-vs.-smooth-regression-lines}{%
+% % \subsubsection{Bonus: Linear vs.~smooth regression lines}\label{bonus-linear-vs.-smooth-regression-lines}}
+
+% Visualization is a key part of any data analysis using regression. If you aren't familiar with visualizations of the  kind of relationships we are capturing with a simple linear regression, read on.
+%(Or near-equivalently, with a $t$-test or correlation test.)
+%Box~\ref{box:slr-equivalences}.)
+% 
+% \paragraph{Continuous $x$ and $y$}
+% 
+% The most straightforward plot is of the `line of best fit', with its 95\% CIs.  For \ttt{ggplot}, we force a line by using the \ttt{method=lm} argument to \ttt{geom\_smooth}, as shown in Section~\ref{sec:example-small-subset}.
+
+% But by default (without this argument), \ttt{geom\_smooth} uses a \emph{nonparametric smoother}: a smooth curve interpolated based on nearby observations. There are different ways to do this; \ttt{geom\_smooth} uses the LOESS method for small samples and generalized additive modeling for large samples. It is fine to treat both as black boxes.)
+
+%
+% We have forced an SLR fit in the plots above using the \texttt{method=\textquotesingle{}lm\textquotesingle{}} flag, but by default \texttt{geom\_smooth} uses a \emph{nonparametric smoother} (such as LOESS, the \texttt{geom\_smooth} default for small samples):
+
+
+
+%
+% %
+% % Note the differences in the two plots:
+% %
+% % \begin{itemize}
+% % \item
+% %   Linear/nonlinear
+% % \item
+% %   CI widths related to distance from mean, versus \textbf{amount of data nearby}
+% % \end{itemize}
+% %
+% % (Hence ``\textbf{L}ocal'' in LOESS.)
+% %
+% \paragraph{Continuous $y$, categorical $x$}
+% 
+% We have seen a few ways to summarize this kind of data which summarize both central tendency and variance:
+% \begin{itemize}
+% \item Plotting mean values of $y$ for each $x$, with empirical data: Figure~{fig:fig:slr-ex-1} right
+% \item Plotting mean values $y$ for each $x$ with approximate 95\% CIs: Figure~\ref{fig:mult-comp-1}
+% \item Density plot of $y$ with superimposed mean, for each $x$: Figure~\ref{fig:neutralization-1}
+% \item Violin plot `` ``: Figure~\ref{fig:transitions-sexb}
+% \end{itemize}
+% 
+% Another common way is a \emph{boxplot}, as in Figure~\ref{fig:boxplot-ex}, which summarizes the distribution of reaction time (\ttt{Rtlexdec}) for \tsc{old} and \tsc{young} speakers in the \ttt{english} data.  The distribution is summarized using the median (the line), ....  This summary is very useful for checking regression assumptions, identifying outliers, and performing model criticism---as we'll come back to later. (For example, we can see that the spread of $y$ is similar for \tsc{old} and \tsc{young} speakers, suggesting the equal-variance assumption is satisfied.) Note that the boxplot doesn't use means or standard deviations at all---it is `nonparametric'.
+
+% 
+% \end{boxedtext}
+% 
+% \textbf{END OF STUFF MOVED FROM LIN REG CHAPTER}
+
+
+% - important to note here: significant  interaction doesn't mean significances of effect at each *level* differs (or effect direction).  T/K interaction -- would be of great theoretical interest to find $T > K$, anywhere. but we don't find that.  This is an extremely common fallacy in practice (neuroscience article), because the common analysis means one thing, but the desired interpretation given RQs is another.
+
+
+
+% 
+% 
+% degrees of freedom: $df =
+% 
+% \begin{itemize}
+% \item
+%   Full model \(M_1\): factor + other predictors (degrees of freedom \(df = n + p + k - 2\))
+% \item
+%   Reduced model \(M_0\): other predictors, only (\(df = n + p - 1\))
+% \end{itemize}
+% 
+% using the methods previously discussed: 
+
+
+
+%% scratch stuff
+%french_cdi_24$lemma <- str_split_fixed(french_cdi_24$definition, '/', n=2)[,1]
+%french_cdi_24$nchar <- str_count(french_cdi_24$lemma, '\\w')
+
+%ggplot(aes(x=nchar, y=prod), data=french_cdi_24) +   geom_smooth(method = "glm", method.args = list(family = "binomial")) + facet_wrap(~lexical_class)
+
+% real model
+% gh_mod_4 <- update(gh_mod_3, data=vot_michael)
