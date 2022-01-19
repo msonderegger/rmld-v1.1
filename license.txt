@@ -1,0 +1,3 @@
+PLEASE SEE LICENSE INFO IN THE WIKI.
+
+Essentially, the text (PDF) is share-only, all R code can be modified and shared, and datasets differ (but at minimum are shareable).
