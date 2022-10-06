@@ -1,12 +1,12 @@
-# Regression Modeling for Linguistic Data book: v. 1.0
+# Regression Modeling for Linguistic Data book: v. 1.1
 
-This repository contains the public version of _Regression Modeling for Linguistic Data_, a book under contract with MIT Press.   RMLD is an intermediate book on statistical analysis for language scientists.  This version (1.0) should be very similar to the published book.  **This repository is a clone of the book's [OSF site](https://osf.io/pnumg/)**, which sometimes gets flagged as spam.
+This repository contains the public version of _Regression Modeling for Linguistic Data_, a book under contract with MIT Press.   RMLD is an intermediate book on statistical analysis for language scientists.  This version (1.1) should be very similar to the published book.  **This repository is a clone of the book's [OSF site](https://osf.io/pnumg/)**, which sometimes gets flagged as spam.
 
-Please cite the current version (v. 1.0) if you use this book. Comments on content or typos are welcome (morgan.sonderegger@gmail.com).  Please see license info (below).
+Please cite the current version (v. 1.1) if you use this book. Comments are welcome (morgan.sonderegger@gmail.com).  Please see license info (below).
 
 **Contents**:
 
-* rmld_v1.0.pdf : The full book
+* rmld_v1.1.pdf : The full book
 * ch10_appendix.html : Chapter 10 online-only appendix.
 
 
